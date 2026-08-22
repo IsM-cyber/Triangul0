@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Triángulos - Sistema de Armas Completo (Incluye Minigun)</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="start-screen">
+        <h1 class="game-title">triangulos extremo</h1>
+        <button id="instructions-toggle">VER INSTRUCCIONES</button>
+        <div class="instructions-box" id="instructions-box">
+            <h2 class="instructions-title">Instrucciones</h2>
+            <div class="control-item"><span class="wasd-keys">W</span><span class="wasd-keys">A</span><span class="wasd-keys">S</span><span class="wasd-keys">D</span><span style="margin-left:10px">Mover triángulo con VELOCIDAD DIRECCIONAL</span></div>
+            <div class="control-item" style="color:#00ff00;font-weight:bold"><span style="color:#00ff00">¡NUEVO! VELOCIDAD DIRECCIONAL:</span><span>Hacia la mira: +50% • Paralelo: -50% • Contra: -25%</span></div>
+            <div class="control-item"><span class="wasd-keys">Click</span><span style="margin-left:10px">Disparar proyectiles (333px alcance)</span></div>
+            <div class="control-item"><span class="wasd-keys">ESPACIO</span><span style="margin-left:10px">TURBO DIRECCIONAL (12 segundos, 3x velocidad, línea recta hacia la mira)</span></div>
+            <div class="control-item"><span class="wasd-keys">1</span><span style="margin-left:10px">Arma: Rifle (proyectil único, alta velocidad)</span></div>
+            <div class="control-item"><span class="wasd-keys">2</span><span style="margin-left:10px">Arma: Escopeta (8 perdigones, 35º dispersión, corto alcance)</span></div>
+            <div class="control-item"><span class="wasd-keys">3</span><span style="margin-left:10px">Arma: Ametralladora (¡DISPARO AUTOMÁTICO! Mantén presionado el botón del mouse)</span></div>
+            <div class="control-item"><span class="wasd-keys">6</span><span style="margin-left:10px">Arma: MINIGUN (¡500 BALAS! 8 daño, 33s recarga, alcance 1 región)</span></div>
+            <div class="control-item"><span class="wasd-keys">R</span><span style="margin-left:10px">Reiniciar posición</span></div>
+            <div class="control-item"><span class="wasd-keys">M</span><span style="margin-left:10px">Mostrar/Ocultar minimapa</span></div>
+            <div class="control-item"><span style="color:#0cc0df">Objetivo:</span><span>Elimina los círculos naranjas apuntando con el mouse y disparando</span></div>
+            <div class="control-item"><span style="color:#ff00ff">Círculos fucsia:</span><span>25 impactos para destruir, reaparecen +1</span></div>
+            <div class="control-item" style="color:#00ff00;font-weight:bold"><span style="color:#00ff00">Círculos verdes:</span><span>100 impactos para destruir, aparecen después de 5 fucsia</span></div>
+            <div class="control-item" style="color:#ff0000;font-weight:bold"><span style="color:#00ff00">¡PELIGRO EXTREMO! BESTIA VERDE:</span><span>Es 4 veces más grande y elimina TODAS las vidas al contacto • Ahora deja CADÁVER con SALPICADURA</span></div>
+            
+            <!-- ¡¡¡NUEVA MINIGUN!!! -->
+            <div class="control-item" style="color:#ff00ff;font-weight:bold;text-align:center;border:1px solid #ff00ff;padding:10px;border-radius:5px;background-color:rgba(255,0,255,0.3);margin-top:15px">
+                <span style="color:#ff00ff;font-size:20px">¡¡¡NUEVA MINIGUN!!!</span><br>
+                <span style="color:#ffffff">• <strong>Tecla 6 - MINIGUN:</strong> ¡500 balas por recarga! • 33 segundos de recarga</span><br>
+                <span style="color:#ffffff">• <strong>Daño:</strong> 8 puntos por bala (8x más que rifle)</span><br>
+                <span style="color:#ffffff">• <strong>Alcance:</strong> 1 región completa (600 píxeles)</span><br>
+                <span style="color:#ffffff">• <strong>Dispersión progresiva:</strong> Aumenta hasta 23° a medida que las balas se alejan</span><br>
+                <span style="color:#ffffff">• <strong>Cadencia:</strong> ¡9 veces más rápida que la ametralladora! (45 disparos/segundo)</span><br>
+                <span style="color:#ffffff">• <strong>Municion:</strong> 500 balas • Barra de munición fucsia • Recarga automática</span><br>
+                <span style="color:#ff00ff">¡La arma definitiva para aniquilación masiva!</span>
+            </div>
+            
+            <div class="control-item" style="color:#ff9900"><span style="color:#ff9900">Zonas de superposición:</span><span>1 bloque = -50% velocidad • 2 bloques = -75% • 3+ bloques = -87.5%</span></div>
+            <div class="control-item" style="color:#ff3333;font-weight:bold"><span style="color:#ff3333">¡NUEVO AJUSTE DE VELOCIDAD!</span><span>Triángulo: 75% velocidad base • Círculos: 125% velocidad • ¡Más desafiante!</span></div>
+            
+            <!-- ¡¡¡NUEVO! SISTEMA DE ARMAS!!! -->
+            <div class="control-item" style="color:#ff9900;font-weight:bold;text-align:center;border:1px solid #ff9900;padding:10px;border-radius:5px;background-color:rgba(255,153,0,0.3);margin-top:15px">
+                <span style="color:#ff9900;font-size:20px">¡¡¡SISTEMA DE ARMAS COMPLETO!!!</span><br>
+                <span style="color:#ffffff">• <strong>Tecla 1 - RIFLE:</strong> Proyectil único, alta velocidad (24px/s), largo alcance (333px)</span><br>
+                <span style="color:#ffffff">• <strong>Tecla 2 - ESCOPETA:</strong> 8 perdigones, 35º dispersión, corto alcance (166px), daño total 8</span><br>
+                <span style="color:#ffffff">• <strong>Tecla 3 - AMETRALLADORA:</strong> ¡DISPARO AUTOMÁTICO! Mantén presionado el botón del mouse</span><br>
+                <span style="color:#ffffff">• <strong>Tecla 6 - MINIGUN:</strong> ¡500 balas! 8 daño, 33s recarga, alcance 600px, 45 disparos/segundo</span><br>
+                <span style="color:#ffffff">• <strong>Estrategia:</strong> Rifle para precisión • Escopeta para combate cercano • Ametralladora para supresión • Minigun para aniquilación</span><br>
+                <span style="color:#ff9900">¡Cambia de arma dinámicamente según la situación!</span>
+            </div>
+
+            <!-- ¡¡¡NUEVO! SISTEMA DE ENFRIAMIENTO POR ARMA -->
+            <div class="control-item" style="color:#ff6600;font-weight:bold;text-align:center;border:1px solid #ff6600;padding:10px;border-radius:5px;background-color:rgba(255,102,0,0.3);margin-top:15px">
+                <span style="color:#ff6600;font-size:20px">¡¡¡SISTEMA DE ENFRIAMIENTO POR ARMA!!!</span><br>
+                <span style="color:#ffffff">• <strong>RIFLE:</strong> 15 disparos → 2 segundos de enfriamiento</span><br>
+                <span style="color:#ffffff">• <strong>ESCOPETA:</strong> 4 disparos → 6 segundos de enfriamiento (TRIPLE del rifle)</span><br>
+                <span style="color:#ffffff">• <strong>AMETRALLADORA:</strong> 30 disparos → 3 segundos de enfriamiento (0.5 más que el rifle)</span><br>
+                <span style="color:#ffffff">• <strong>MINIGUN:</strong> 500 balas → 33 segundos de recarga (¡LA MÁS LARGA!)</span><br>
+                <span style="color:#ffffff">• <strong>Estrategia:</strong> Gestiona los disparos según el arma para evitar tiempos muertos</span><br>
+                <span style="color:#ff9900">¡Cada arma tiene su propio sistema de recarga!</span>
+            </div>
+            
+            <!-- ¡¡¡NUEVO! SISTEMA DE CADÁVERES CON SALPICADURA PARA BESTIA VERDE -->
+            <div class="control-item" style="color:#00ff00;font-weight:bold;text-align:center;border:1px solid #00ff00;padding:10px;border-radius:5px;background-color:rgba(0,255,0,0.3);margin-top:15px">
+                <span style="color:#00ff00;font-size:20px">¡¡¡NUEVO! SISTEMA DE CADÁVERES PARA BESTIA VERDE</span><br>
+                <span style="color:#ffffff">• <strong>CADÁVER GIGANTE:</strong> La bestia verde ahora deja un cadáver de 160px</span><br>
+                <span style="color:#ffffff">• <strong>SALPICADURA VERDE:</strong> Partículas que se emiten en dirección opuesta al impacto</span><br>
+                <span style="color:#ffffff">• <strong>DAÑO POR SALPICADURA:</strong> Causa daño al jugador si está en la trayectoria</span><br>
+                <span style="color:#ffffff">• <strong>MANCHAS ORGÁNICAS:</strong> Pequeñas manchas verdes que quedan en el suelo</span><br>
+                <span style="color:#ffffff">• <strong>PERSISTENCIA:</strong> Las manchas se desvanecen lentamente</span><br>
+                <span style="color:#00ff00">¡Cuidado con los cadáveres de la bestia verde!</span>
+            </div>
+        </div>
+        <button id="start-button">COMENZAR VERSIÓN INFINITA</button>
+        <div class="game-info">muerte</div>
+    </div>
+    <div id="game-wrapper" style="display: none;">
+        <div id="top-hud">
+            <div id="health-container">
+                <div id="health-bar-wrapper">
+                    <div id="health-bar"></div>
+                </div>
+            </div>
+            <div id="turbo-container">
+                <div id="turbo-bar-wrapper">
+                    <div id="turbo-bar"></div>
+                </div>
+            </div>
+            <!-- BARRA DE NIVEL -->
+            <div id="level-container">
+                <div id="level-bar-wrapper">
+                    <div id="level-bar"></div>
+                </div>
+            </div>
+            <!-- SISTEMA DE ARMAS -->
+            <div id="weapon-container">
+                <div id="weapon-indicator">
+                    <div class="weapon-icon rifle" id="weapon-icon"></div>
+                    <span id="weapon-name">RIFLE</span>
+                </div>
+            </div>
+            <!-- INDICADOR DE MUNICIÓN DE MINIGUN -->
+            <div id="ammo-container">
+                <div id="ammo-indicator">
+                    <span id="current-ammo">500</span>/<span id="max-ammo">500</span>
+                </div>
+                <div id="ammo-bar-wrapper">
+                    <div id="ammo-bar"></div>
+                </div>
+            </div>
+            <div id="score-display">0000</div>
+        </div>
+        
+        <div id="game-container">
+            <div id="world-container"></div>
+            <div id="player"></div>
+            <div id="cursor"></div>
+            <div id="minimap"></div>
+            <div id="cooldown-indicator">
+                <div id="cooldown-bar"></div>
+                <div id="cooldown-text">RECARGANDO...</div>
+            </div>
+            
+            <!-- Efecto de transición de color -->
+            <div class="color-transition-effect" id="color-transition"></div>
+            
+            <!--<div class="game-over" id="game-over-screen">
+                <h2>¡Juego Terminado!</h2>
+                <p id="final-score">Puntuación: 0000</p>
+                <p id="hits-final">Impactos: 0</p>
+                <p id="walls-destroyed">Ladrillos destruidos: 0</p>
+                <p id="special-count">Círculos fucsia eliminados: 0</p>
+                <p id="green-count">Círculos verdes eliminados: 0</p>
+                <p id="pestilence-damage">Daño por pestilencia recibido: 0</p>
+                <p id="splash-damage">Daño por salpicadura recibido: 0</p>
+                <p id="tentacle-damage">Daño por tentáculos recibido: 0</p>
+                <p id="tentacles-destroyed">Tentáculos destruidos: 0</p>
+                <p id="rifle-shots">Disparos de rifle: 0</p>
+                <p id="shotgun-shots">Disparos de escopeta: 0</p>
+                <p id="machinegun-shots">Disparos de ametralladora: 0</p>
+                <p id="minigun-shots">Disparos de minigun: 0</p>
+                <p id="max-level">Nivel máximo alcanzado: 1</p>
+                <p id="game-over-message">¡Inténtalo de nuevo!</p>
+                <button class="restart-button" id="restart-button">JUGAR DE NUEVO</button>
+            </div>-->
+            <div class="game-over" id="game-over-screen">
+                <h2>¡Juego Terminado!</h2>
+                
+                <button class="restart-button" id="restart-button">JUGAR DE NUEVO</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- HTML permanece igual -->
+
+    <!-- Cargar módulos JavaScript -->
+    <script src="config.js"></script>
+    <script src="gameState.js"></script>
+    <script src="weaponSystem.js"></script>
+    <script src="cooldownSystem.js"></script>
+    <script src="tentacleSystem.js"></script>
+    <script src="directedCorpseSystem.js"></script>
+    <script src="rubbleSystem.js"></script>
+    <script src="brickSystem.js"></script>
+    <script src="colorSystem.js"></script>
+    <script src="obstacleGrid.js"></script>
+    <script src="regionSystem.js"></script>
+    <script src="gameFunctions.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
