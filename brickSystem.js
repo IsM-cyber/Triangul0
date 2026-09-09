@@ -125,45 +125,66 @@ const BRICK_SYSTEM = {
     },
     
     createBrickImpactEffect(x, y, damageLevel) {
-        const spark = document.createElement('div');
-        spark.className = 'brick-damage-indicator';
-        spark.style.left = `${x}px`;
-        spark.style.top = `${y}px`;
-        document.getElementById('world-container').appendChild(spark);
+            // Con canvas render: los efectos efímeros se dibujan como partículas (sin divs)
+            if (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER) {
+                // Spark (corto, brillante)
+                CANVAS_RENDER.spawnParticle({ x, y, life: 0.2, size: 3, color: '#ffffff', shape: 'glow' });
+                // 3 partículas grises grisaceas que salen (replica brick-explosion-particle)
+                for (let i = 0; i < 3; i++) {
+                    const grayValue = Math.floor(Math.random() * 80) + 150;
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = (Math.random() * 8 + 4) * 3; // distance en CSS por 0.8s => velocidad aprox
+                    CANVAS_RENDER.spawnParticle({
+                        x, y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.8,
+                        size: 2,
+                        color: `rgb(${grayValue}, ${grayValue}, ${grayValue})`
+                    });
+                }
+                return;
+            }
+
+            const spark = document.createElement('div');
+            spark.className = 'brick-damage-indicator';
+            spark.style.left = `${x}px`;
+            spark.style.top = `${y}px`;
+            document.getElementById('world-container').appendChild(spark);
         
-        const crack = document.createElement('div');
-        crack.className = 'brick-crack-effect';
-        crack.style.left = `${x}px`;
-        crack.style.top = `${y}px`;
-        crack.style.setProperty('--crack-rotate', `${Math.random() * 360}deg`);
-        document.getElementById('world-container').appendChild(crack);
+            const crack = document.createElement('div');
+            crack.className = 'brick-crack-effect';
+            crack.style.left = `${x}px`;
+            crack.style.top = `${y}px`;
+            crack.style.setProperty('--crack-rotate', `${Math.random() * 360}deg`);
+            document.getElementById('world-container').appendChild(crack);
         
-        for (let i = 0; i < 3; i++) {
-            const particle = document.createElement('div');
-            particle.className = 'brick-explosion-particle';
-            particle.style.left = `${x}px`;
-            particle.style.top = `${y}px`;
+            for (let i = 0; i < 3; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'brick-explosion-particle';
+                particle.style.left = `${x}px`;
+                particle.style.top = `${y}px`;
             
-            const grayValue = Math.floor(Math.random() * 80) + 150;
-            particle.style.backgroundColor = `rgb(${grayValue}, ${grayValue}, ${grayValue})`;
+                const grayValue = Math.floor(Math.random() * 80) + 150;
+                particle.style.backgroundColor = `rgb(${grayValue}, ${grayValue}, ${grayValue})`;
             
-            const angle = Math.random() * Math.PI * 2;
-            const distance = Math.random() * 8 + 4;
-            const tx = Math.cos(angle) * distance;
-            const ty = Math.sin(angle) * distance;
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * 8 + 4;
+                const tx = Math.cos(angle) * distance;
+                const ty = Math.sin(angle) * distance;
             
-            particle.style.setProperty('--particle-tx', `${tx}px`);
-            particle.style.setProperty('--particle-ty', `${ty}px`);
+                particle.style.setProperty('--particle-tx', `${tx}px`);
+                particle.style.setProperty('--particle-ty', `${ty}px`);
             
-            document.getElementById('world-container').appendChild(particle);
-            setTimeout(() => particle.remove(), 800);
-        }
+                document.getElementById('world-container').appendChild(particle);
+                setTimeout(() => particle.remove(), 800);
+            }
         
-        setTimeout(() => {
-            spark.remove();
-            crack.remove();
-        }, 200);
-    },
+            setTimeout(() => {
+                spark.remove();
+                crack.remove();
+            }, 200);
+        },
     
     destroyBrick(brick, index) {
         if (!brick.element) return;
@@ -217,9 +238,31 @@ const BRICK_SYSTEM = {
     },
     
     createGreyDebris(x, y, width, height) {
-        const fragmentCount = Math.floor((width + height) / 4) + 4;
+            const fragmentCount = Math.floor((width + height) / 4) + 4;
         
-        for (let i = 0; i < fragmentCount; i++) {
+            // Con canvas render: partículas de fragmento en canvas (sin divs efímeros)
+            if (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER) {
+                for (let i = 0; i < fragmentCount; i++) {
+                    const size = Math.random() * 1.2 + 0.8;
+                    const grayValue = Math.floor(Math.random() * 70) + 100;
+                    const fragX = x - width/2 + Math.random() * width;
+                    const fragY = y - height/2 + Math.random() * height;
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = (Math.random() * 3 + 1) * 8 * 3; // tx=A*8 en 0.9s => velocidad aprox
+                    CANVAS_RENDER.spawnParticle({
+                        x: fragX, y: fragY,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.9,
+                        size,
+                        color: `rgb(${grayValue}, ${grayValue}, ${grayValue})`,
+                        shape: Math.random() > 0.5 ? 'rect' : 'circle'
+                    });
+                }
+                return;
+            }
+
+            for (let i = 0; i < fragmentCount; i++) {
             const fragment = document.createElement('div');
             fragment.className = 'brick-fragment';
             

@@ -33,5 +33,27 @@ const obstacleGrid = {
                 this.grid.get(key).push(obstacle);
             }
         }
+    },
+
+    // Devuelve los obstáculos en las celdas alrededor de un punto (radio en px).
+    // Reemplaza el barrido completo O(N) por una búsqueda en celdas vecinas.
+    getNearbyObstacles(x, y, radius) {
+        const minCellX = Math.floor((x - radius) / this.cellSize);
+        const maxCellX = Math.floor((x + radius) / this.cellSize);
+        const minCellY = Math.floor((y - radius) / this.cellSize);
+        const maxCellY = Math.floor((y + radius) / this.cellSize);
+        
+        const result = [];
+        for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+            for (let cellY = minCellY; cellY <= maxCellY; cellY++) {
+                const cell = this.grid.get(`${cellX},${cellY}`);
+                if (cell) {
+                    for (let i = 0; i < cell.length; i++) {
+                        result.push(cell[i]);
+                    }
+                }
+            }
+        }
+        return result;
     }
 };

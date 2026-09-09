@@ -48,7 +48,9 @@ let gameState = {
     playerPrevY: 900,
     stains: [],
     minimapVisible: false,
-    centralRegionTemplate: {
+        useSpatialHash: true,  // Feature flag: ON para test
+            useRenderBatching: true,  // Feature flag: ON para test
+            centralRegionTemplate: {
         obstacles: [],
         enemies: []
     },

@@ -27,7 +27,9 @@ function calculateDirectionalSpeed(moveAngle, lookAngle) {
 function checkPlayerCollisionAtPosition(x, y) {
     const playerRadius = 12;
     
-    for (let obstacle of gameState.obstacles) {
+    // Spatial hash: solo obstáculos cerca de la posición (antes barría los ~3000)
+    const nearby = obstacleGrid.getNearbyObstacles(x, y, 100);
+    for (let obstacle of nearby) {
         if (!obstacle.isBlack && !obstacle.isDestructible) continue;
         
         const closestX = Math.max(obstacle.left, Math.min(x, obstacle.right));
@@ -115,7 +117,74 @@ function updateCamera() {
     
     worldContainer.style.transform = `translate(${-gameState.cameraX}px, ${-gameState.cameraY}px)`;
     updateCurrentRegion();
-    updateMinimap();
+    // El minimap se actualiza de forma cacheada (solo se reconstruye al cambiar de región)
+    updateMinimapCached();
+}
+
+// Caché para el minimap: las 26 celdas (25 regiones + jugador) se construyen
+// UNA SOLA VEZ y se reutilizan. Evita reconstruir el DOM del minimap cada frame
+// (que mataba `innerHTML` y recreaba ~26 nodos 60 veces/segundo = reflow continuo).
+let minimapRegionCache = null;   // { centerX, centerY, elements: [divs...] }
+let minimapPlayerEl = null;      // div del indicador del jugador (se mueve a mano)
+
+function updateMinimapCached() {
+    if (!gameState.minimapVisible || !minimap) return;
+    
+    const centerX = gameState.currentRegionX;
+    const centerY = gameState.currentRegionY;
+    
+    // 1) Reconstruir las 25 regiones SOLO si cambió la región central
+    if (!minimapRegionCache || minimapRegionCache.centerX !== centerX || minimapRegionCache.centerY !== centerY) {
+        // Limpiar todo y reconstruir las regiones fijas
+        minimap.innerHTML = '';
+        
+        const regionEls = [];
+        for (let y = centerY - 2; y <= centerY + 2; y++) {
+            for (let x = centerX - 2; x <= centerX + 2; x++) {
+                const region = document.createElement('div');
+                region.className = 'minimap-region';
+                region.style.cssText = `
+                    width:20px;
+                    height:20px;
+                    left:${(x - (centerX - 2)) * 22 + 10}px;
+                    top:${(y - (centerY - 2)) * 22 + 10}px;
+                `;
+                
+                if (x === centerX && y === centerY) {
+                    region.classList.add('active');
+                }
+                
+                if (isRegionLoaded(x, y)) {
+                    region.style.backgroundColor = 'rgba(12,192,223,0.3)';
+                }
+                
+                minimap.appendChild(region);
+                regionEls.push({ region, x, y });
+            }
+        }
+        
+        // Crear (o re-crear) el indicador del jugador al final (queda encima de las regiones)
+        minimapPlayerEl = document.createElement('div');
+        minimapPlayerEl.className = 'minimap-player';
+        minimap.appendChild(minimapPlayerEl);
+        
+        // Guardar caché
+        minimapRegionCache = {
+            centerX, centerY,
+            elements: regionEls
+        };
+    }
+    
+    // 2) Posicionar el indicador del jugador (se mueve cada frame, barato: un solo style)
+    if (!minimapPlayerEl || !minimap.contains(minimapPlayerEl)) {
+        minimapPlayerEl = document.createElement('div');
+        minimapPlayerEl.className = 'minimap-player';
+        minimap.appendChild(minimapPlayerEl);
+    }
+    const playerRelX = (gameState.playerX % REGION_WIDTH) / REGION_WIDTH;
+    const playerRelY = (gameState.playerY % REGION_HEIGHT) / REGION_HEIGHT;
+    minimapPlayerEl.style.left = `${(2 * 22 + 10) + playerRelX * 20}px`;
+    minimapPlayerEl.style.top = `${(2 * 22 + 10) + playerRelY * 20}px`;
 }
 
 function updateCurrentRegion() {
@@ -526,14 +595,10 @@ function createCentralRegionTemplate() {
 }
 
 function createScaledObstacleFromTemplate(template, regionX, regionY, scaleFactor) {
-    const obstacle = document.createElement('div');
-    obstacle.className = 'obstacle';
-    
-    if (template.isBlack) {
-        obstacle.classList.add('black');
-    } else if (template.isSlow) {
-        obstacle.classList.add('slow');
-    }
+    // Con canvas render activo, black/slow son estáticos (nunca cambian de estado visual)
+    // y el canvas los dibuja directo. NO creamos su div en el DOM: esto elimina de verdad
+    // esos nodos (memoria) y evita que acompañen al world-container al mover la cámara.
+    const useCanvas = USE_CANVAS_RENDER && window.CANVAS_RENDER;
     
     const scaledWidth = template.width * scaleFactor;
     const scaledHeight = template.height * scaleFactor;
@@ -544,18 +609,30 @@ function createScaledObstacleFromTemplate(template, regionX, regionY, scaleFacto
     const left = worldX - scaledWidth / 2;
     const top = worldY - scaledHeight / 2;
     
-    obstacle.style.cssText = `width:${scaledWidth}px;height:${scaledHeight}px;left:${left}px;top:${top}px`;
-    
-    if (template.isBlack) {
-        obstacle.style.zIndex = '7';
-    } else if (template.isSlow) {
-        obstacle.style.zIndex = '3';
+    let obstacle = null;
+    if (!useCanvas) {
+        obstacle = document.createElement('div');
+        obstacle.className = 'obstacle';
+        
+        if (template.isBlack) {
+            obstacle.classList.add('black');
+        } else if (template.isSlow) {
+            obstacle.classList.add('slow');
+        }
+        
+        obstacle.style.cssText = `width:${scaledWidth}px;height:${scaledHeight}px;left:${left}px;top:${top}px`;
+        
+        if (template.isBlack) {
+            obstacle.style.zIndex = '7';
+        } else if (template.isSlow) {
+            obstacle.style.zIndex = '3';
+        }
+        
+        worldContainer.appendChild(obstacle);
     }
     
-    worldContainer.appendChild(obstacle);
-    
     const obstacleObj = {
-        element: obstacle,
+        element: obstacle,  // null con canvas activo
         x: worldX,
         y: worldY,
         width: scaledWidth,
@@ -573,6 +650,13 @@ function createScaledObstacleFromTemplate(template, regionX, regionY, scaleFacto
     };
     
     gameState.obstacles.push(obstacleObj);
+    
+    // Indexar en el spatial hash para que las colisiones espaciales lo detecten
+    if (useCanvas) {
+        // Con canvas, el objeto no tiene element; el canvas lo dibuja por datos
+    }
+    obstacleGrid.addObstacle(obstacleObj);
+    
     return obstacleObj;
 }
 
@@ -604,12 +688,27 @@ function createEnemy(type = 'orange', x = null, y = null) {
         enemyX = x;
         enemyY = y;
     } else {
-        const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
-        enemyX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 40) + 20;
-        enemyY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 40) + 20;
-    }
+            const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
+            let enemyX, enemyY;
+            let attempts = 0;
+            const maxAttempts = 50;
+            // Ensure enemy doesn't spawn on top of player
+            do {
+                enemyX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 40) + 20;
+                enemyY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 40) + 20;
+                attempts++;
+                const distanceToPlayer = Math.sqrt((enemyX - gameState.playerX)**2 + (enemyY - gameState.playerY)**2);
+                if (distanceToPlayer >= 150 || attempts >= maxAttempts) break;
+            } while (true);
+        }
     
     enemy.style.cssText = `left:${enemyX - radius}px;top:${enemyY - radius}px`;
+    // Con canvas render: ocultar el div (el canvas lo dibuja, no se necesita el div visible)
+    const useCanvasNow = (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER);
+    if (useCanvasNow) {
+        enemy.style.display = 'none';
+    }
+    console.log('[createEnemy] canvasMode=' + useCanvasNow + ' enemy=' + type + ' class=' + enemy.className + ' display=' + enemy.style.display);
     worldContainer.appendChild(enemy);
     
     let baseSpeed;
@@ -908,7 +1007,13 @@ function detectObstacleCollisions() {
     const activeEnemies = getActiveEnemies();
     
     for (let enemy of activeEnemies) {
-        for (let obstacle of gameState.obstacles) {
+        // Usar spatial hash: solo obstáculos en las celdas alrededor del enemigo,
+        // en vez de barrer los ~3000 obstáculos completos cada frame.
+        // El radio cubre el tamaño máximo de enemigo + margen de celda.
+        const radius = Math.max(enemy.radius || 10, 80) + 40;
+        const nearby = obstacleGrid.getNearbyObstacles(enemy.x, enemy.y, radius);
+        
+        for (let obstacle of nearby) {
             if (!obstacle.isBlack && !obstacle.isDestructible) continue;
             
             const closestX = Math.max(obstacle.left, Math.min(enemy.x, obstacle.right));
@@ -928,17 +1033,176 @@ function detectObstacleCollisions() {
     }
 }
 
-function detectSlowZones() {
-    gameState.playerSlowZonesCount = 0;
+// ========== SPATIAL HASH COLLISION SYSTEM ==========
+// Sistema paralelo para colisiones O(n) usando spatial hash grid
+// Se activa con gameState.useSpatialHash = true
+// NOTA: Original detectEnemyCollisions() NO hace enemy-enemy collision,
+// solo mueve enemigos. Este sistema replica ese comportamiento exacto.
+
+function detectEnemyCollisions_Spatial() {
+    // Rebuild grid cada frame
+    SPATIAL_HASH.clear();
+    const activeEnemies = getActiveEnemies();
     
-    for (let obstacle of gameState.obstacles) {
-        if (obstacle.isSlow) {
-            if (gameState.playerX >= obstacle.left && gameState.playerX <= obstacle.right && 
-                gameState.playerY >= obstacle.top && gameState.playerY <= obstacle.bottom) {
-                gameState.playerSlowZonesCount++;
+    // Insert all alive enemies into grid
+    for (let i = 0; i < activeEnemies.length; i++) {
+        const enemy = activeEnemies[i];
+        SPATIAL_HASH.insert(i, enemy.x, enemy.y);
+        enemy.prevX = enemy.x;
+        enemy.prevY = enemy.y;
+    }
+    
+    // Move enemies (NO enemy-enemy collision, matching original behavior)
+    for (let i = 0; i < activeEnemies.length; i++) {
+        const enemy = activeEnemies[i];
+        if (gameState.mergingEnemies) continue;
+        
+        let speedFactor = 1;
+        if (enemy.slowZonesCount > 0) {
+            speedFactor = Math.pow(0.5, enemy.slowZonesCount);
+        }
+        
+        // Just move, no collision check - matching original exactly
+        enemy.x += enemy.speedX * speedFactor;
+        enemy.y += enemy.speedY * speedFactor;
+    }
+}
+
+function updateProjectileCollisions_Spatial() {
+    const projectiles = gameState.projectiles;
+    if (!projectiles || projectiles.length === 0) return;
+    
+    const activeEnemies = getActiveEnemies();
+    if (activeEnemies.length === 0) return;
+    
+    // Rebuild grid with current enemy positions
+    SPATIAL_HASH.clear();
+    for (let i = 0; i < activeEnemies.length; i++) {
+        const enemy = activeEnemies[i];
+        SPATIAL_HASH.insert(i, enemy.x, enemy.y);
+    }
+    
+    // Check each projectile against nearby enemies
+    for (let p = projectiles.length - 1; p >= 0; p--) {
+        const projectile = projectiles[p];
+        if (!projectile.active) continue;
+        
+        const nearby = SPATIAL_HASH.getNearby(projectile.x, projectile.y);
+        
+        for (const eIdx of nearby) {
+            const enemy = activeEnemies[eIdx];
+            if (!enemy) continue;
+            
+            const dx = enemy.x - projectile.x;
+            const dy = enemy.y - projectile.y;
+            const distSq = dx * dx + dy * dy;
+            const hitRadius = enemy.radius + 8; // projectile radius ~8px
+            
+            if (distSq < hitRadius * hitRadius) {
+                // HIT!
+                damageEnemy(enemy, projectile.damage, projectile);
+                projectile.active = false;
+                
+                // Remove projectile from array
+                projectiles.splice(p, 1);
+                break; // One projectile = one hit
             }
         }
     }
+}
+
+// Validation helper: run both systems and compare
+function validateSpatialHashRegression() {
+    if (!window.SPATIAL_HASH) return { error: 'SPATIAL_HASH not loaded' };
+    
+    const mismatches = [];
+    const testFrames = 50;
+    
+    // Save original state
+    const originalUseSpatialHash = gameState.useSpatialHash;
+    
+    for (let frame = 0; frame < testFrames; frame++) {
+        // Backup enemy positions
+        const activeEnemies = getActiveEnemies();
+        const backup = activeEnemies.map(e => ({ x: e.x, y: e.y, speedX: e.speedX, speedY: e.speedY }));
+        
+        // Run OLD system
+        gameState.useSpatialHash = false;
+        detectEnemyCollisions();
+        const oldPositions = activeEnemies.map(e => ({ x: e.x, y: e.y }));
+        
+        // Restore
+        for (let i = 0; i < activeEnemies.length; i++) {
+            activeEnemies[i].x = backup[i].x;
+            activeEnemies[i].y = backup[i].y;
+            activeEnemies[i].speedX = backup[i].speedX;
+            activeEnemies[i].speedY = backup[i].speedY;
+        }
+        
+        // Run NEW system
+        gameState.useSpatialHash = true;
+        detectEnemyCollisions_Spatial();
+        const newPositions = activeEnemies.map(e => ({ x: e.x, y: e.y }));
+        
+        // Compare
+        for (let i = 0; i < activeEnemies.length; i++) {
+            const dx = oldPositions[i].x - newPositions[i].x;
+            const dy = oldPositions[i].y - newPositions[i].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0.5) { // Tolerancia 0.5px
+                mismatches.push({ frame, enemyIndex: i, dist, old: oldPositions[i], new: newPositions[i] });
+            }
+        }
+        
+        // Step simulation forward
+        stepSimulationFrame();
+    }
+    
+    // Restore flag
+    gameState.useSpatialHash = originalUseSpatialHash;
+    
+    return { 
+        passed: mismatches.length === 0, 
+        mismatches,
+        totalFrames: testFrames
+    };
+}
+
+function stepSimulationFrame() {
+    // Minimal step to advance game state for validation
+    if (gameState.gameActive && !gameState.mergingEnemies) {
+        updateProjectiles();
+        updateEnemies(1/60);
+    }
+}
+
+function detectSlowZones() {
+    gameState.playerSlowZonesCount = 0;
+    
+    // Recolectar las slow-zones cercanas al player UNA sola vez por frame.
+    // Los enemigos están cerca del jugador, así que reutilizamos el mismo array
+    // para todos en vez de crear un getNearbyObstacles por enemigo (evita ~200 arrays/frame).
+    const nearbyObstacles = obstacleGrid.getNearbyObstacles(gameState.playerX, gameState.playerY, 400);
+    const slowZones = [];
+    for (let i = 0; i < nearbyObstacles.length; i++) {
+        const obstacle = nearbyObstacles[i];
+        if (obstacle.isSlow) {
+            slowZones.push(obstacle);
+        }
+    }
+    
+    // Jugador
+    for (let obstacle of slowZones) {
+        if (gameState.playerX >= obstacle.left && gameState.playerX <= obstacle.right && 
+            gameState.playerY >= obstacle.top && gameState.playerY <= obstacle.bottom) {
+            gameState.playerSlowZonesCount++;
+        }
+    }
+    
+    // Cap: el CSS solo define slowed (≥1) y slowed2 (≥3). Más de 3 no tiene sentido visual
+    // ni de gameplay: 0.5^3 = 12.5% velocidad mínima. Evita acumulación excesiva en zonas
+    // con muchos solapados (antes llegaba a 6 = 1.56% velocidad = "no se mueve").
+    if (gameState.playerSlowZonesCount > 3) gameState.playerSlowZonesCount = 3;
     
     player.classList.remove('slowed', 'slowed2');
     if (gameState.playerSlowZonesCount >= 3) {
@@ -951,12 +1215,11 @@ function detectSlowZones() {
     
     for (let enemy of activeEnemies) {
         enemy.slowZonesCount = 0;
-        for (let obstacle of gameState.obstacles) {
-            if (obstacle.isSlow) {
-                if (enemy.x >= obstacle.left && enemy.x <= obstacle.right && 
-                    enemy.y >= obstacle.top && enemy.y <= obstacle.bottom) {
-                    enemy.slowZonesCount++;
-                }
+        // Chequear contra las slow-zones ya recolectadas (sin crear arrays por enemigo)
+        for (let obstacle of slowZones) {
+            if (enemy.x >= obstacle.left && enemy.x <= obstacle.right && 
+                enemy.y >= obstacle.top && enemy.y <= obstacle.bottom) {
+                enemy.slowZonesCount++;
             }
         }
         
@@ -1025,7 +1288,9 @@ function detectPlayerObstacleCollision() {
     gameState.playerPrevX = gameState.playerX;
     gameState.playerPrevY = gameState.playerY;
     
-    for (let obstacle of gameState.obstacles) {
+    // Spatial hash: solo obstáculos cerca del jugador (antes barría los ~3000)
+    const nearby = obstacleGrid.getNearbyObstacles(gameState.playerX, gameState.playerY, 100);
+    for (let obstacle of nearby) {
         if (!obstacle.isBlack && !obstacle.isDestructible) continue;
         
         const closestX = Math.max(obstacle.left, Math.min(gameState.playerX, obstacle.right));
@@ -1215,7 +1480,13 @@ function updatePlayerPosition() {
     const playerScreenX = gameState.playerX - gameState.cameraX;
     const playerScreenY = gameState.playerY - gameState.cameraY;
     
-    player.style.cssText = `left:${playerScreenX}px;top:${playerScreenY}px;--player-rotation:${gameState.playerRotation}deg`;
+    if (gameState.useRenderBatching && window.RENDER_BATCH) {
+        RENDER_BATCH.add(() => {
+            player.style.cssText = `left:${playerScreenX}px;top:${playerScreenY}px;--player-rotation:${gameState.playerRotation}deg`;
+        });
+    } else {
+        player.style.cssText = `left:${playerScreenX}px;top:${playerScreenY}px;--player-rotation:${gameState.playerRotation}deg`;
+    }
     
     if (gameState.isOnRubble) {
         if (!player.classList.contains('unstable')) {
@@ -1396,7 +1667,14 @@ function updateProjectiles() {
 function updateEnemies(deltaTime) {
     if (gameState.mergingEnemies) return;
     
-    detectEnemyCollisions();
+    // Spatial Hash collision system (feature flag)
+    if (gameState.useSpatialHash) {
+        detectEnemyCollisions_Spatial();
+        updateProjectileCollisions_Spatial();
+    } else {
+        detectEnemyCollisions();
+    }
+    
     detectObstacleCollisions();
     detectBorderCollisions();
     
@@ -1406,7 +1684,16 @@ function updateEnemies(deltaTime) {
         const enemy = activeEnemies[i];
         
         if (enemy.element && !enemy.element.classList.contains('dead-fuxia') && !enemy.element.classList.contains('dead-green')) {
-            enemy.element.style.cssText = `left:${enemy.x - enemy.radius}px;top:${enemy.y - enemy.radius}px`;
+            // Con canvas render: NO escribir al DOM (el canvas lo dibuja)
+            if (!(USE_CANVAS_RENDER && window.CANVAS_RENDER)) {
+                if (gameState.useRenderBatching && window.RENDER_BATCH) {
+                    RENDER_BATCH.add(() => {
+                        if (enemy.element) enemy.element.style.cssText = `left:${enemy.x - enemy.radius}px;top:${enemy.y - enemy.radius}px`;
+                    });
+                } else {
+                    enemy.element.style.cssText = `left:${enemy.x - enemy.radius}px;top:${enemy.y - enemy.radius}px`;
+                }
+            }
         }
         
         if (enemy.type === 'green' && enemy.active) {
@@ -1530,7 +1817,11 @@ function endGame() {
 function toggleMinimap() {
     gameState.minimapVisible = !gameState.minimapVisible;
     if (minimap) minimap.style.display = gameState.minimapVisible ? 'block' : 'none';
-    updateMinimap();
+    if (gameState.minimapVisible) {
+        // Forzar reconstrucción al volver a mostrarlo (por si cambió de región mientras estaba oculto)
+        minimapRegionCache = null;
+        updateMinimapCached();
+    }
 }
 
 function updateWorldColorBasedOnLevel() {

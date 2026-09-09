@@ -44,6 +44,14 @@ const COOLDOWN_SYSTEM = {
                 cooldownIndicator.style.borderColor = '#ff3333';
                 cooldownBar.style.backgroundColor = '#ff3333';
                 cooldownText.style.color = '#ff3333';
+            } else if (weaponType === 'sniper') {
+                cooldownIndicator.style.borderColor = '#00ff00';
+                cooldownBar.style.backgroundColor = '#00ff00';
+                cooldownText.style.color = '#00ff00';
+            } else if (weaponType === 'bazooka') {
+                cooldownIndicator.style.borderColor = '#ff00ff';
+                cooldownBar.style.backgroundColor = '#ff00ff';
+                cooldownText.style.color = '#ff00ff';
             } else if (weaponType === 'minigun') {
                 cooldownIndicator.style.borderColor = '#ff00ff';
                 cooldownBar.style.backgroundColor = '#ff00ff';
@@ -110,3 +118,5 @@ const COOLDOWN_SYSTEM = {
         gameState.cooldownWeaponType = null;
     }
 };
+
+window.COOLDOWN_SYSTEM = COOLDOWN_SYSTEM;
