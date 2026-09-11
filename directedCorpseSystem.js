@@ -495,15 +495,25 @@ const DIRECTED_CORPSE_SYSTEM = {
             const knockbackY = (dy / distance) * knockbackForce;
             
             let remainingForce = knockbackForce;
-            const applyKnockback = () => {
-                if (remainingForce > 0.5 && gameState.gameActive) {
-                    gameState.playerX += knockbackX * (remainingForce / knockbackForce);
-                    gameState.playerY += knockbackY * (remainingForce / knockbackForce);
-                    remainingForce *= 0.8;
+                        const applyKnockback = () => {
+                            if (remainingForce > 0.5 && gameState.gameActive) {
+                                const nextX = gameState.playerX + knockbackX * (remainingForce / knockbackForce);
+                                const nextY = gameState.playerY + knockbackY * (remainingForce / knockbackForce);
                     
-                    requestAnimationFrame(applyKnockback);
-                }
-            };
+                                // No empujar al jugador dentro de un obstáculo (muro de ladrillos):
+                                // si el destino choca, cortar el empuje y quedarse pegado al borde.
+                                const collisionCheck = checkPlayerCollisionAtPosition(nextX, nextY);
+                                if (collisionCheck.collided) {
+                                    return;
+                                }
+                    
+                                gameState.playerX = nextX;
+                                gameState.playerY = nextY;
+                                remainingForce *= 0.8;
+                    
+                                requestAnimationFrame(applyKnockback);
+                            }
+                        };
             
             applyKnockback();
         }

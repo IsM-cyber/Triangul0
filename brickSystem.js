@@ -187,23 +187,27 @@ const BRICK_SYSTEM = {
         },
     
     destroyBrick(brick, index) {
-        if (!brick.element) return;
+            // Con canvas render, los bricks no tienen element DOM; no retornar, seguir para crear escombros
+            // if (!brick.element) return;
+
+            const x = brick.x;
+            const y = brick.y;
+            const width = brick.width;
+            const height = brick.height;
+
+            this.createDustCloud(x, y, Math.max(width, height) * 0.8);
+            this.createShockwave(x, y);
+            this.createGreyDebris(x, y, width, height);
+            this.createPersistentBrickRubble(x, y, width, height);
+
+                    // Con canvas render, los bricks no tienen element DOM; solo remover si existe
+                    if (brick.element) brick.element.remove();
         
-        const x = brick.x;
-        const y = brick.y;
-        const width = brick.width;
-        const height = brick.height;
-        
-        this.createDustCloud(x, y, Math.max(width, height) * 0.8);
-        this.createShockwave(x, y);
-        this.createGreyDebris(x, y, width, height);
-        this.createPersistentBrickRubble(x, y, width, height);
-        
-        brick.element.remove();
-        
-        if (index >= 0 && index < gameState.obstacles.length) {
-            gameState.obstacles.splice(index, 1);
-        }
+                    if (index >= 0 && index < gameState.obstacles.length) {
+                                gameState.obstacles.splice(index, 1);
+                            }
+                            // Quitar del spatial hash para que no bloquee al jugador (muro fantasma)
+                            if (obstacleGrid.removeObstacle) obstacleGrid.removeObstacle(brick);
         
         gameState.score += this.BRICK_SCORE;
         gameState.wallsDestroyed++;
@@ -215,7 +219,11 @@ const BRICK_SYSTEM = {
     },
     
     createDustCloud(x, y, size) {
-        const cloud = document.createElement('div');
+            if (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER) {
+                CANVAS_RENDER.spawnParticle({ x, y, life: 0.6, size: size * 0.6, color: 'rgba(180,180,180,0.5)', shape: 'circle' });
+                return;
+            }
+            const cloud = document.createElement('div');
         cloud.className = 'brick-dust-cloud';
         cloud.style.cssText = `left:${x}px;top:${y}px;width:${size}px;height:${size}px`;
         document.getElementById('world-container').appendChild(cloud);
@@ -229,7 +237,11 @@ const BRICK_SYSTEM = {
     },
     
     createShockwave(x, y) {
-        const shockwave = document.createElement('div');
+            if (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER) {
+                CANVAS_RENDER.spawnParticle({ x, y, life: 0.4, size: 15, color: 'rgba(255,255,255,0.3)', shape: 'circle' });
+                return;
+            }
+            const shockwave = document.createElement('div');
         shockwave.className = 'brick-shockwave';
         shockwave.style.cssText = `left:${x}px;top:${y}px;width:30px;height:30px`;
         document.getElementById('world-container').appendChild(shockwave);
@@ -306,7 +318,27 @@ const BRICK_SYSTEM = {
     },
     
     createPersistentBrickRubble(x, y, width, height) {
-        const rubbleCount = Math.floor((width + height) / 4) + 3;
+            if (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER) {
+                            // Canvas: crear stains ligeros (sin DOM) que cubran DENSAMENTE la zona
+                            // del brick destruido, para que el efecto de inestabilidad siempre se dispare
+                            const rubbleCount = 80; // stains densos -> buena cobertura sin colgar
+                                                        for (let i = 0; i < rubbleCount; i++) {
+                                                            if (gameState.stains.length >= 3000) this.cleanupExcessBrickRubble();
+                                                            // stains en todo el rectangulo del brick + margen
+                                                            const sx = x - width/2 + Math.random() * width;
+                                                            const sy = y - height/2 + Math.random() * height;
+                                                            gameState.stains.push({
+                                                                x: sx,
+                                                                y: sy,
+                                                                type: 'brick',
+                                                                createdAt: Date.now(),
+                                                                size: 0.3 + Math.random() * 0.7, // tamaño 3-8 px
+                                                                shape: Math.random() // forma fija (square o circle)
+                                                            });
+                                                        }
+                            return;
+                        }
+            const rubbleCount = Math.floor((width + height) / 4) + 3;
         
         for (let i = 0; i < rubbleCount; i++) {
             const rubbleType = Math.random();
@@ -320,12 +352,12 @@ const BRICK_SYSTEM = {
     },
     
     createBrickStain(x, y, width, height) {
-        if (gameState.stains.length >= 1500) {
-            this.cleanupExcessBrickRubble();
-        }
+            if (gameState.stains.length >= 1500) {
+                this.cleanupExcessBrickRubble();
+            }
         
-        const stain = document.createElement('div');
-        stain.className = 'brick-rubble';
+            const stain = document.createElement('div');
+            stain.className = 'brick-rubble';
         
         const sizeType = Math.random();
         if (sizeType > 0.7) {
@@ -409,7 +441,7 @@ const BRICK_SYSTEM = {
             toRemove.forEach(stain => {
                 const index = gameState.stains.findIndex(s => s === stain);
                 if (index !== -1) {
-                    if (stain.element && document.getElementById('world-container').contains(stain.element)) {
+                    if (stain.element && document.getElementById('world-container') && document.getElementById('world-container').contains(stain.element)) {
                         stain.element.remove();
                     }
                     gameState.stains.splice(index, 1);

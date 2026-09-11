@@ -255,7 +255,10 @@ function unloadRegion(regionX, regionY) {
             if (enemy.type === 'green') {
                 TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
             }
-            enemy.element.remove();
+            // Canvas guard: enemies rendered in canvas don't have DOM elements
+            if (enemy.element && worldContainer.contains(enemy.element)) {
+                enemy.element.remove();
+            }
             return false;
         }
         return true;
@@ -264,7 +267,10 @@ function unloadRegion(regionX, regionY) {
     gameState.obstacles = gameState.obstacles.filter(obstacle => {
         const obstacleRegion = getRegionFromWorldCoords(obstacle.x, obstacle.y);
         if (obstacleRegion.x === regionX && obstacleRegion.y === regionY) {
-            obstacle.element.remove();
+            // Canvas guard: some obstacles might not have DOM elements
+            if (obstacle.element && worldContainer.contains(obstacle.element)) {
+                obstacle.element.remove();
+            }
             return false;
         }
         return true;

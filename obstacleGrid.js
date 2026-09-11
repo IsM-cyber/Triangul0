@@ -55,5 +55,32 @@ const obstacleGrid = {
             }
         }
         return result;
+    },
+
+    // Elimina un obstáculo del grid (necesario cuando se destruye un brick)
+    removeObstacle(obstacle) {
+        if (!obstacle) return;
+        const left = obstacle.x - obstacle.width / 2;
+        const right = obstacle.x + obstacle.width / 2;
+        const top = obstacle.y - obstacle.height / 2;
+        const bottom = obstacle.y + obstacle.height / 2;
+        
+        const startCellX = Math.floor(left / this.cellSize);
+        const endCellX = Math.floor(right / this.cellSize);
+        const startCellY = Math.floor(top / this.cellSize);
+        const endCellY = Math.floor(bottom / this.cellSize);
+        
+        for (let cellX = startCellX; cellX <= endCellX; cellX++) {
+            for (let cellY = startCellY; cellY <= endCellY; cellY++) {
+                const key = `${cellX},${cellY}`;
+                const cell = this.grid.get(key);
+                if (cell) {
+                    const idx = cell.indexOf(obstacle);
+                    if (idx !== -1) {
+                        cell.splice(idx, 1);
+                    }
+                }
+            }
+        }
     }
 };

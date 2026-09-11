@@ -245,6 +245,34 @@ const CANVAS_RENDER = {
         }
     },
 
+    // Dibuja los stains (escombros) en el suelo
+    drawStains() {
+        const stains = gameState.stains || [];
+        const camX = gameState.cameraX || 0;
+        const camY = gameState.cameraY || 0;
+        const ctx = this.ctx;
+        for (let i = 0; i < stains.length; i++) {
+            const s = stains[i];
+            if (s.type !== 'brick' && s.type !== 'brick-fragment') continue;
+            const sx = s.x - camX;
+            const sy = s.y - camY;
+            if (sx < -15 || sx > this.logicalW + 15 || sy < -15 || sy > this.logicalH + 15) continue;
+            // Tamaño variable replicando las manchas originales (small/medium/large)
+            let sz = s.size || 0.5;
+            sz = 2 + sz * 6; // size 0.3-0.7 -> ~4-6px; default 5px
+            // Color gris, igual que original (100-180)
+            const gray = 100 + Math.floor(((s.idx = (s.idx||0)+1) % 80)); // determinista-ish
+            ctx.fillStyle = 'rgba(' + gray + ',' + gray + ',' + gray + ',0.5)';
+            if ((s.shape || 0.5) > 0.5) {
+                ctx.fillRect(sx - sz/2, sy - sz/2, sz, sz);
+            } else {
+                ctx.beginPath();
+                ctx.arc(sx, sy, sz/2, 0, Math.PI*2);
+                ctx.fill();
+            }
+        }
+    },
+
     // ========== SISTEMA DE PARTÍCULAS (efectos efímeros en canvas) ==========
     // Array de partículas: {x, y, vx, vy, life, maxLife, size, color, alphaDecay, gravity}
     // Reemplaza los divs efímeros (sparks, debris, muzzles) por datos numéricos dibujados.
@@ -331,6 +359,9 @@ const CANVAS_RENDER = {
 
         ctx.clearRect(0, 0, this.logicalW, this.logicalH);
         ctx.shadowBlur = 0;
+
+        // 0) Escombros (stains) en el suelo — debajo de todo
+        this.drawStains();
 
         // 1) Obstáculos (fondo) — solo los visibles
         this.drawObstacles();

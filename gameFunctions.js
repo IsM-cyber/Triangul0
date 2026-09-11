@@ -1303,6 +1303,13 @@ function detectPlayerObstacleCollision() {
         if (distance < playerRadius) {
             const overlap = playerRadius - distance;
             if (overlap > 0) {
+                // Evitar división por cero en colNormal (NaN) cuando el jugador está
+                // exactamente en el centro del obstáculo (distance === 0)
+                let colNormalX = 0, colNormalY = 0;
+                if (distance > 0) {
+                    colNormalX = dx / distance;
+                    colNormalY = dy / distance;
+                }
                 const playerDX = gameState.playerX - gameState.playerPrevX;
                 const playerDY = gameState.playerY - gameState.playerPrevY;
                 
@@ -1310,20 +1317,22 @@ function detectPlayerObstacleCollision() {
                     const moveMagnitude = Math.sqrt(playerDX * playerDX + playerDY * playerDY);
                     const moveNormalX = playerDX / moveMagnitude;
                     const moveNormalY = playerDY / moveMagnitude;
-                    const colNormalX = dx / distance;
-                    const colNormalY = dy / distance;
                     const dot = moveNormalX * colNormalX + moveNormalY * colNormalY;
                     
                     if (dot > 0) {
                         gameState.playerX -= moveNormalX * overlap * 1.1;
                         gameState.playerY -= moveNormalY * overlap * 1.1;
-                    } else {
+                    } else if (distance > 0) {
                         gameState.playerX += colNormalX * overlap * 1.1;
                         gameState.playerY += colNormalY * overlap * 1.1;
+                    } else {
+                        // distance === 0: empujar en dirección aleatoria estable por magnitud
+                        gameState.playerX -= moveNormalX * overlap * 1.1;
+                        gameState.playerY -= moveNormalY * overlap * 1.1;
                     }
-                } else {
-                    gameState.playerX += (dx / distance) * overlap * 1.1;
-                    gameState.playerY += (dy / distance) * overlap * 1.1;
+                } else if (distance > 0) {
+                    gameState.playerX += colNormalX * overlap * 1.1;
+                    gameState.playerY += colNormalY * overlap * 1.1;
                 }
                 
                 if (gameState.turboActive) {

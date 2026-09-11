@@ -451,3 +451,12 @@ handleResize();
 
 // Iniciar el bucle del juego
 gameLoop();
+
+// Mover game-over-screen al body para sacarlo del wrapper escalado
+// (position:fixed se rompe dentro de un ancestro con transform:scale)
+// y para que initGame() (worldContainer.innerHTML='') no lo borre.
+if (gameOverScreen) {
+    gameOverScreen.style.position = 'fixed';
+    gameOverScreen.style.zIndex = '1000';
+    document.body.appendChild(gameOverScreen);
+}
