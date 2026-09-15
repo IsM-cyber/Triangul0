@@ -72,25 +72,38 @@ const DIRECTED_CORPSE_SYSTEM = {
     },
     
     transformEnemyVisual(enemy, corpse, isGreen) {
-        if (!enemy.element) return;
-        
-        if (isGreen) {
-            enemy.element.className = 'enemy dead-green';
-        } else {
-            enemy.element.className = 'enemy dead-fuxia';
+        // Con canvas render el enemigo vivo no tiene div (element null):
+        // el cadaver crea su propio div aca, solo en el momento de morir.
+        let el = enemy.element;
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'enemy';
+            el.style.position = 'absolute';
+            document.getElementById('world-container').appendChild(el);
+            enemy.element = el;
         }
         
-        enemy.element.style.width = `${corpse.radius * 2}px`;
-        enemy.element.style.height = `${corpse.radius * 2}px`;
-        enemy.element.style.left = `${enemy.x - corpse.radius}px`;
-        enemy.element.style.top = `${enemy.y - corpse.radius}px`;
-        enemy.element.style.zIndex = '4';
-        enemy.element.style.opacity = '0.85';
-        enemy.element.style.pointerEvents = 'none';
-        enemy.element.style.transform = 'translate(0, 0)';
+        // Marca de estado: gameFunctions la usa para los chequeos de vivo/muerto.
+        enemy.deadClass = isGreen ? 'green' : 'fuxia';
         
-        corpse.transformedEnemy = enemy.element;
+        if (isGreen) {
+            el.className = 'enemy dead-green';
+        } else {
+            el.className = 'enemy dead-fuxia';
+        }
+        
+        el.style.width = `${corpse.radius * 2}px`;
+        el.style.height = `${corpse.radius * 2}px`;
+        el.style.left = `${enemy.x - corpse.radius}px`;
+        el.style.top = `${enemy.y - corpse.radius}px`;
+        el.style.zIndex = '4';
+        el.style.opacity = '0.85';
+        el.style.pointerEvents = 'none';
+        el.style.transform = 'translate(0, 0)';
+        
+        corpse.transformedEnemy = el;
     },
+
     
     createStaticStains(corpse, isGreen) {
         const stainCount = isGreen ? this.GREEN_STAIN_COUNT : this.STAIN_COUNT;

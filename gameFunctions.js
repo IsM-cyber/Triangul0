@@ -661,8 +661,11 @@ function createScaledObstacleFromTemplate(template, regionX, regionY, scaleFacto
 }
 
 function createEnemy(type = 'orange', x = null, y = null) {
-    const enemy = document.createElement('div');
-    enemy.className = 'enemy';
+    // Con canvas render el enemigo vivo NO crea div (el canvas lo dibuja por datos).
+    // El cadaver DOM crea su propio div al morir (directedCorpseSystem.transformEnemyVisual).
+    const useCanvasNow = (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER);
+    const enemy = useCanvasNow ? null : document.createElement('div');
+    if (enemy) enemy.className = 'enemy';
     
     let radius, hitsRequired;
     switch(type) {
@@ -671,12 +674,12 @@ function createEnemy(type = 'orange', x = null, y = null) {
             hitsRequired = 1;
             break;
         case 'fuchsia':
-            enemy.classList.add('special');
+            if (enemy) enemy.classList.add('special');
             radius = 20;
             hitsRequired = 25;
             break;
         case 'green':
-            enemy.classList.add('green');
+            if (enemy) enemy.classList.add('green');
             radius = 80;
             hitsRequired = 100;
             break;
@@ -702,14 +705,10 @@ function createEnemy(type = 'orange', x = null, y = null) {
             } while (true);
         }
     
-    enemy.style.cssText = `left:${enemyX - radius}px;top:${enemyY - radius}px`;
-    // Con canvas render: ocultar el div (el canvas lo dibuja, no se necesita el div visible)
-    const useCanvasNow = (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER);
-    if (useCanvasNow) {
-        enemy.style.display = 'none';
+    if (enemy) {
+        enemy.style.cssText = `left:${enemyX - radius}px;top:${enemyY - radius}px`;
+        worldContainer.appendChild(enemy);
     }
-    console.log('[createEnemy] canvasMode=' + useCanvasNow + ' enemy=' + type + ' class=' + enemy.className + ' display=' + enemy.style.display);
-    worldContainer.appendChild(enemy);
     
     let baseSpeed;
     switch(type) {
@@ -878,7 +877,7 @@ function startSpecialEvent() {
     
     gameState.enemies.forEach(enemy => {
         if (enemy.type === 'orange' && enemy.active) {
-            enemy.element.classList.add('merging');
+            if (enemy.element) enemy.element.classList.add('merging');
             enemy.merging = true;
         }
     });
@@ -901,8 +900,10 @@ function mergeEnemiesToCenter() {
             if (distance > 5) {
                 enemy.x += (dx / distance) * mergeSpeed;
                 enemy.y += (dy / distance) * mergeSpeed;
-                enemy.element.style.left = `${enemy.x - enemy.radius}px`;
-                enemy.element.style.top = `${enemy.y - enemy.radius}px`;
+                if (enemy.element) {
+                    enemy.element.style.left = `${enemy.x - enemy.radius}px`;
+                    enemy.element.style.top = `${enemy.y - enemy.radius}px`;
+                }
             } else {
                 enemiesToRemove.push(enemy);
             }
@@ -1223,11 +1224,13 @@ function detectSlowZones() {
             }
         }
         
-        enemy.element.classList.remove('slowed', 'slowed2');
-        if (enemy.slowZonesCount >= 3) {
-            enemy.element.classList.add('slowed2');
-        } else if (enemy.slowZonesCount >= 1) {
-            enemy.element.classList.add('slowed');
+        if (enemy.element) {
+            enemy.element.classList.remove('slowed', 'slowed2');
+            if (enemy.slowZonesCount >= 3) {
+                enemy.element.classList.add('slowed2');
+            } else if (enemy.slowZonesCount >= 1) {
+                enemy.element.classList.add('slowed');
+            }
         }
     }
 }
@@ -1580,7 +1583,7 @@ function updateProjectiles() {
             if (distance < collisionDistance) {
                 if (enemy.type === 'orange') {
                     createOrganicOrangeExplosion(enemy.x, enemy.y, enemy.radius);
-                    enemy.element.remove();
+                    if (enemy.element) enemy.element.remove();
                     gameState.enemies.splice(j, 1);
                     gameState.currentEnemyCount--;
                     WEAPON_SYSTEM.removeProjectile(projectile);
@@ -1728,12 +1731,12 @@ function updateEnemies(deltaTime) {
                 if (gameState.gameActive) player.style.opacity = '1';
             }, 200);
             
-            if (enemy.element && !enemy.element.classList.contains('dead-fuxia') && !enemy.element.classList.contains('dead-green')) {
+            if (!enemy.deadClass) {
                 if (enemy.type === 'green') {
                     TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
                 }
                 
-                enemy.element.remove();
+                if (enemy.element) enemy.element.remove();
                 const globalIndex = gameState.enemies.indexOf(enemy);
                 if (globalIndex !== -1) {
                     gameState.enemies.splice(globalIndex, 1);
