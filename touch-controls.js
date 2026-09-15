@@ -720,17 +720,20 @@ class TouchControls {
             // Keep existing aim position, only initialize if at default (300,300) or undefined
             if (state.mouseX === undefined || state.mouseY === undefined || 
                 (state.mouseX === 300 && state.mouseY === 300)) {
-                // Convert viewport to gameContainer coordinates
+                // Convert viewport to gameContainer LOGICAL coordinates (dividido por scale)
                 const gameContainer = document.getElementById('game-container');
                 if (gameContainer) {
                     const rect = gameContainer.getBoundingClientRect();
-                    state.mouseX = centerX - rect.left;
-                    state.mouseY = centerY - rect.top;
+                    const scaleFactor = rect.width / 600;
+                    state.mouseX = (centerX - rect.left) / scaleFactor;
+                    state.mouseY = (centerY - rect.top) / scaleFactor;
                 } else {
                     state.mouseX = centerX;
                     state.mouseY = centerY;
                 }
             }
+            // La mira nunca sale de la pantalla
+            this.clampAimToVisibleScreen(state);
         }
 
         // Base is FIXED at bottom-right
@@ -812,12 +815,13 @@ class TouchControls {
 
             // Initialize aim position to joystick base center if at default (300,300)
             if (state.mouseX === 300 && state.mouseY === 300) {
-                // Convert viewport to gameContainer coordinates
+                // Convert viewport to gameContainer LOGICAL coordinates (dividido por scale)
                 const gameContainer = document.getElementById('game-container');
                 if (gameContainer) {
                     const rect = gameContainer.getBoundingClientRect();
-                    state.mouseX = centerX - rect.left;
-                    state.mouseY = centerY - rect.top;
+                    const scaleFactor = rect.width / 600;
+                    state.mouseX = (centerX - rect.left) / scaleFactor;
+                    state.mouseY = (centerY - rect.top) / scaleFactor;
                 } else {
                     state.mouseX = centerX;
                     state.mouseY = centerY;
@@ -828,22 +832,9 @@ class TouchControls {
             state.mouseX += Math.cos(angle) * aimSpeed;
             state.mouseY += Math.sin(angle) * aimSpeed;
 
-            // Clamp to game container bounds
-            const gameContainer = document.getElementById('game-container');
-            if (gameContainer) {
-                const rect = gameContainer.getBoundingClientRect();
-                state.mouseX = Math.max(0, Math.min(rect.width, state.mouseX));
-                state.mouseY = Math.max(0, Math.min(rect.height, state.mouseY));
-            }
-
-            // Update visual cursor
-            const cursor = document.getElementById('cursor');
-            if (cursor && gameContainer) {
-                const rect = gameContainer.getBoundingClientRect();
-                cursor.style.left = state.mouseX + 'px';
-                cursor.style.top = state.mouseY + 'px';
-                cursor.style.display = 'block';
-            }
+            // Clamp a la zona VISIBLE: la mira nunca sale de la pantalla
+            // (el helper también posiciona el cursor visual)
+            this.clampAimToVisibleScreen(state);
 
             state.lookIntensity = distanceRatio;
             state.lookAngle = angle;
@@ -1108,6 +1099,28 @@ class TouchControls {
             minimap.style.display = state.minimapVisible ? 'block' : 'none';
 
             this.minimapZone.style.borderColor = state.minimapVisible ? '#ffff00' : '#00ff00';
+        }
+    }
+
+    // ========== AIM CLAMP: la mira nunca sale de la pantalla ==========
+    // El game-container está escalado con overflow, así que sus bordes lógicos
+    // (0..600) quedan FUERA del viewport. La lógica de límites vive en aimClamp.js
+    // (cargado como global) y está testeada por node --test.
+    clampAimToVisibleScreen(state) {
+        const gameContainer = document.getElementById('game-container');
+        if (!gameContainer) return;
+        const rect = gameContainer.getBoundingClientRect();
+        const r = window.clampAim(state.mouseX, state.mouseY, rect, window.innerWidth, window.innerHeight);
+        if (!r) return;
+        state.mouseX = r.x;
+        state.mouseY = r.y;
+        
+        // Update visual cursor (coords lógicas dentro del container escalado)
+        const cursor = document.getElementById('cursor');
+        if (cursor) {
+            cursor.style.left = state.mouseX + 'px';
+            cursor.style.top = state.mouseY + 'px';
+            cursor.style.display = 'block';
         }
     }
 
