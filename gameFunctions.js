@@ -1420,7 +1420,11 @@ function detectProjectileObstacleCollision(projectile, prevX, prevY) {
             // Munición normal: impacta y muere en el primer obstáculo
             return 0;
         }
-            // Sniper penetrante: atraviesa; seguir chequeando el resto del frame
+        // Sniper penetrante: atraviesa; pierde energia POR CADA pared atravesada.
+        // (Antes se descontaba una sola vez por frame en el caller, pero el loop
+        //  destruia TODAS las paredes del segmento -> la bala sobrevivia con mas
+        //  dano del esperado y el enemigo detras recibia dano inflado.)
+        projectile.damage -= projectile.penetrationLoss;
     }
     
     // Paredes negras indestructibles: bloquean SIEMPRE (incluso al sniper)
@@ -1698,8 +1702,10 @@ function updateProjectiles() {
         const obstacleHit = detectProjectileObstacleCollision(projectile, prevX, prevY);
         if (obstacleHit !== -1) {
             if (projectile.penetrating && obstacleHit === 0) {
-                // Sniper: la bala atraviesa el obstaculo; pierde energia y sigue
-                projectile.damage -= projectile.penetrationLoss;
+                // Sniper: la bala atraviesa el obstaculo.
+                // La perdida de energia ya se aplico POR CADA pared dentro de
+                // detectProjectileObstacleCollision; aqui solo verificamos si
+                // agoto su dano en el paso y la retiramos.
                 if (projectile.damage <= 0) {
                     WEAPON_SYSTEM.removeProjectile(projectile);
                     gameState.projectiles.splice(i, 1);
