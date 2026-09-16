@@ -1069,49 +1069,6 @@ function detectEnemyCollisions_Spatial() {
     }
 }
 
-function updateProjectileCollisions_Spatial() {
-    const projectiles = gameState.projectiles;
-    if (!projectiles || projectiles.length === 0) return;
-    
-    const activeEnemies = getActiveEnemies();
-    if (activeEnemies.length === 0) return;
-    
-    // Rebuild grid with current enemy positions
-    SPATIAL_HASH.clear();
-    for (let i = 0; i < activeEnemies.length; i++) {
-        const enemy = activeEnemies[i];
-        SPATIAL_HASH.insert(i, enemy.x, enemy.y);
-    }
-    
-    // Check each projectile against nearby enemies
-    for (let p = projectiles.length - 1; p >= 0; p--) {
-        const projectile = projectiles[p];
-        if (!projectile.active) continue;
-        
-        const nearby = SPATIAL_HASH.getNearby(projectile.x, projectile.y);
-        
-        for (const eIdx of nearby) {
-            const enemy = activeEnemies[eIdx];
-            if (!enemy) continue;
-            
-            const dx = enemy.x - projectile.x;
-            const dy = enemy.y - projectile.y;
-            const distSq = dx * dx + dy * dy;
-            const hitRadius = enemy.radius + 8; // projectile radius ~8px
-            
-            if (distSq < hitRadius * hitRadius) {
-                // HIT!
-                damageEnemy(enemy, projectile.damage, projectile);
-                projectile.active = false;
-                
-                // Remove projectile from array
-                projectiles.splice(p, 1);
-                break; // One projectile = one hit
-            }
-        }
-    }
-}
-
 // Validation helper: run both systems and compare
 function validateSpatialHashRegression() {
     if (!window.SPATIAL_HASH) return { error: 'SPATIAL_HASH not loaded' };
@@ -1793,10 +1750,15 @@ function updateProjectiles() {
 function updateEnemies(deltaTime) {
     if (gameState.mergingEnemies) return;
     
-    // Spatial Hash collision system (feature flag)
+    // Spatial Hash collision system (feature flag): SOLO colisiones enemigo-enemigo.
+    // Las colisiones proyectil-enemigo se resuelven en updateProjectiles (loop manual,
+    // unica fuente de verdad: swept para penetrantes, hitEnemies, perdida de energia por
+    // enemigo y bazooka con area). El duplicado updateProjectileCollisions_Spatial fue
+    // eliminado: llamaba a damageEnemy() (no definida -> ReferenceError en runtime) y
+    // usaba radio mas permisivo (radius+8 vs 0.5+radius) -> doble dano potencial y rompia
+    // la penetracion del sniper (quita la bala al primer golpe).
     if (gameState.useSpatialHash) {
         detectEnemyCollisions_Spatial();
-        updateProjectileCollisions_Spatial();
     } else {
         detectEnemyCollisions();
     }
