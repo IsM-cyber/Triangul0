@@ -64,6 +64,7 @@ const WEAPON_SYSTEM = {
         name: "SNIPER",
         type: "sniper",
         damagePerShot: 28,
+        penetrationLoss: 7,   // sniper: cada obstaculo/enemigo que atraviesa resta este daño
         projectileCount: 1,
         speed: 50,
         maxDistance: 2400,
@@ -215,7 +216,7 @@ const WEAPON_SYSTEM = {
 
         if (hasAmmo) {
             ammoContainer.style.display = 'flex';
-            const remainingShots = Math.max(0, weapon.cooldownShots - (window.COOLDOWN_SYSTEM?.currentCooldownShots || 0));
+            const remainingShots = Math.max(0, weapon.cooldownShots - (window.COOLDOWN_SYSTEM?.getShots(weapon.type) ?? 0));
             const ammoPercent = (remainingShots / weapon.cooldownShots) * 100;
             ammoIndicator.innerHTML = `<span id="current-ammo">${remainingShots}</span>/<span id="max-ammo">${weapon.cooldownShots}</span>`;
             ammoBar.style.width = `${ammoPercent}%`;
@@ -461,7 +462,12 @@ const WEAPON_SYSTEM = {
             damage: weapon.damagePerShot,
             originalAngle: angle,
             areaDamage: weapon.areaDamage || 0,
-            explosionRadius: weapon.explosionRadius || 0
+            explosionRadius: weapon.explosionRadius || 0,
+            // Sniper: la bala atraviesa obstaculos y enemigos (penetracion),
+            // perdiendo damage en cada impacto hasta agotarse
+            penetrating: weapon.type === 'sniper',
+            penetrationLoss: weapon.penetrationLoss || 0,
+            hitEnemies: weapon.type === 'sniper' ? new Set() : null
         };
     },
 
@@ -692,6 +698,29 @@ const WEAPON_SYSTEM = {
     applyBazookaAreaDamage(x, y, radius, areaDamage) {
         const explosion = this.createBazookaExplosion(x, y, radius);
 
+        // La onda tambien rompe los obstaculos destructibles (paredes de brick)
+        for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+            const obstacle = gameState.obstacles[i];
+            if (!obstacle.isDestructible) continue;
+            
+            const dx = obstacle.x - x;
+            const dy = obstacle.y - y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const halfSize = Math.max(obstacle.width || 8, obstacle.height || 8) / 2;
+            
+            if (distance < radius + halfSize) {
+                obstacle.health -= areaDamage;
+                
+                BRICK_SYSTEM.createBrickImpactEffect(obstacle.x, obstacle.y, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
+                BRICK_SYSTEM.applyDamageVisual(obstacle.element, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
+                
+                if (obstacle.health <= 0) {
+                    BRICK_SYSTEM.destroyBrick(obstacle, i);
+                }
+            }
+        }
+
+        // Enemigos: misma logica de muerte que los proyectiles (todos los tipos)
         for (let i = gameState.enemies.length - 1; i >= 0; i--) {
             const enemy = gameState.enemies[i];
             const dx = enemy.x - x;
@@ -699,36 +728,12 @@ const WEAPON_SYSTEM = {
             const distance = Math.sqrt(dx * dx + dy * dy);
 
             if (distance < radius + enemy.radius) {
-                enemy.hitsTaken += areaDamage;
-                gameState.hits += areaDamage;
-
+                const impactAngle = Math.atan2(enemy.y - y, enemy.x - x);
                 this.createAreaDamageEffect(enemy.x, enemy.y);
 
-                if (enemy.type === 'orange' && enemy.hitsTaken >= 1) {
-                    createOrganicOrangeExplosion(enemy.x, enemy.y, enemy.radius);
-                    enemy.element.remove();
+                if (handleEnemyHit(enemy, areaDamage, impactAngle)) {
                     gameState.enemies.splice(i, 1);
                     gameState.currentEnemyCount--;
-                    gameState.score += 100;
-                    updateScoreDisplay();
-                    gameState.orangeEnemiesToCreate++;
-
-                    let currentOrangeCount = gameState.enemies.filter(e => e.type === 'orange').length;
-                    let enemiesToCreate = gameState.orangeEnemiesToCreate - currentOrangeCount;
-                    for (let k = 0; k < enemiesToCreate; k++) {
-                        createEnemy('orange');
-                    }
-                } else if (enemy.type === 'fuchsia' && enemy.hitsTaken >= 25) {
-                    gameState.enemies.splice(i, 1);
-                    gameState.currentEnemyCount--;
-                    gameState.score += 500;
-                    updateScoreDisplay();
-                    gameState.specialHits++;
-                    gameState.fuchsiaEnemiesCount++;
-
-                    for (let k = 0; k < 2; k++) {
-                        // fuchsia spawns handled elsewhere
-                    }
                 }
             }
         }

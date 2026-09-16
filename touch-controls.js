@@ -278,10 +278,10 @@ class TouchControls {
         this.fireZone.id = 'tc-fire';
         this.fireZone.style.cssText = `
             position: fixed !important;
-            right: 160px !important;
+            right: 145px !important;
             bottom: 20px !important;
-            width: 30px !important;
-            height: 30px !important;
+            width: 60px !important;
+            height: 60px !important;
             z-index: 3000 !important;
             touch-action: none !important;
             border-radius: 50% !important;
@@ -296,8 +296,8 @@ class TouchControls {
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
-            width: 30px !important;
-            height: 30px !important;
+            width: 60px !important;
+            height: 60px !important;
             background: rgba(255, 100, 0, 0.4) !important;
             border-radius: 50% !important;
             display: flex !important;
@@ -309,7 +309,7 @@ class TouchControls {
         this.fireLabel = document.createElement('span');
         this.fireLabel.style.cssText = `
             color: #ffaa00 !important;
-            font-size: 7px !important;
+            font-size: 14px !important;
             font-weight: bold !important;
             text-shadow: 0 0 4px #ff6400 !important;
             pointer-events: none !important;
@@ -332,8 +332,8 @@ class TouchControls {
             z-index: 3000 !important;
             touch-action: none !important;
             border-radius: 50% !important;
-            background: rgba(0, 0, 0, 0.7) !important;
-            border: 2px solid #00ffff !important;
+            background: #999 !important;
+            border: 2px solid #fff !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
@@ -347,19 +347,15 @@ class TouchControls {
             width: 100% !important;
             height: 100% !important;
             border-radius: 50% !important;
-            background: #222 !important;
-            border: 2px solid #fff !important;
-            color: #00ffff !important;
-            font-size: 10px !important;
-            font-weight: bold !important;
+            background: transparent !important;
+            border: none !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             touch-action: none !important;
             pointer-events: auto !important;
-            text-shadow: 0 0 4px #00ffff !important;
         `;
-        this.weaponButton.textContent = 'R';
+        // Sin capa visible: el toggle de arma queda transparente (un solo circulo) -
 
         this.weaponZone.appendChild(this.weaponButton);
         document.body.appendChild(this.weaponZone);
@@ -999,10 +995,8 @@ class TouchControls {
             const nextId = currentId >= 6 ? 1 : currentId + 1;
             window.WEAPON_SYSTEM.switchWeapon(nextId);
 
-            // Update button text/color directly (switchWeapon calls updateWeaponDisplay which also updates it)
+            // Update button state: sin letras ni colores por arma (un solo estilo fijo)
             if (this.weaponButton) {
-                this.weaponButton.textContent = weaponNames[nextId - 1];
-                this.weaponButton.style.background = weaponColors[nextId - 1];
                 this.weaponButton.dataset.weaponId = nextId;
 
                 this.weaponButton.style.transform = 'scale(1.2)';

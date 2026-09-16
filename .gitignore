@@ -1,2 +1,5 @@
 .vercel
-Triangul0-optimizado/
+node_modules/
+Triangul0-optimizado/node_modules/
+playwright-report/
+test-results/

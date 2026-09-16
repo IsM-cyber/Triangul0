@@ -1350,38 +1350,93 @@ function detectPlayerObstacleCollision() {
     }
 }
 
-function detectProjectileObstacleCollision(projectile) {
-    for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
-        const obstacle = gameState.obstacles[i];
-        
-        if (obstacle.isBrick) {
-            if (projectile.x >= obstacle.left && projectile.x <= obstacle.right && 
-                projectile.y >= obstacle.top && projectile.y <= obstacle.bottom) {
-                
-                obstacle.health -= projectile.damage;
-                
-                BRICK_SYSTEM.createBrickImpactEffect(projectile.x, projectile.y, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
-                BRICK_SYSTEM.applyDamageVisual(obstacle.element, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
-                
-                if (obstacle.health <= 0) {
-                    BRICK_SYSTEM.destroyBrick(obstacle, i);
-                }
-                
-                return true;
-            }
-        }
+// Colision por SEGMENTO (slab method): chequea el trayecto del proyectil entre
+// su posicion previa y la actual contra el rectangulo del obstaculo.
+// Antes solo se chequeaba el punto final -> el proyectil avanzaba 16-50px por
+// frame y las paredes miden 2-4px, asi que las atravesaba (tunneling).
+// Devuelve el tiempo de entrada t (0..1) o -1 si el segmento no cruza el rect.
+function segmentRectEnterTime(prevX, prevY, x, y, left, top, right, bottom) {
+    let tEnter = 0;
+    let tExit = 1;
+    const dx = x - prevX;
+    const dy = y - prevY;
+    
+    if (dx === 0) {
+        if (prevX < left || prevX > right) return -1;
+    } else {
+        let t1 = (left - prevX) / dx;
+        let t2 = (right - prevX) / dx;
+        if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+        if (t1 > tEnter) tEnter = t1;
+        if (t2 < tExit) tExit = t2;
+        if (tEnter > tExit) return -1;
     }
     
+    if (dy === 0) {
+        if (prevY < top || prevY > bottom) return -1;
+    } else {
+        let t1 = (top - prevY) / dy;
+        let t2 = (bottom - prevY) / dy;
+        if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+        if (t1 > tEnter) tEnter = t1;
+        if (t2 < tExit) tExit = t2;
+        if (tEnter > tExit) return -1;
+    }
+    
+    if (tExit < 0 || tEnter > 1) return -1;
+    return Math.max(0, Math.min(tEnter, 1));
+}
+
+function detectProjectileObstacleCollision(projectile, prevX, prevY) {
+    // Devuelve: -1 sin impacto | 0 impacto destructible (daño aplicado) | 1 impacto indestructible (bloquea)
+    let hitDestructible = false;
+
+    // Ladrillos destructibles (paredes): daño en el punto real de impacto
+    for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+        const obstacle = gameState.obstacles[i];
+        if (!obstacle.isBrick) continue;
+        
+        const tEnter = segmentRectEnterTime(
+            prevX, prevY, projectile.x, projectile.y,
+            obstacle.left, obstacle.top, obstacle.right, obstacle.bottom
+        );
+        if (tEnter < 0) continue;
+        
+        const hitX = prevX + (projectile.x - prevX) * tEnter;
+        const hitY = prevY + (projectile.y - prevY) * tEnter;
+        
+        obstacle.health -= projectile.damage;
+        
+        BRICK_SYSTEM.createBrickImpactEffect(hitX, hitY, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
+        BRICK_SYSTEM.applyDamageVisual(obstacle.element, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
+        
+        if (obstacle.health <= 0) {
+            BRICK_SYSTEM.destroyBrick(obstacle, i);
+        }
+        
+        hitDestructible = true;
+        
+        if (!projectile.penetrating) {
+            // Munición normal: impacta y muere en el primer obstáculo
+            return 0;
+        }
+            // Sniper penetrante: atraviesa; seguir chequeando el resto del frame
+    }
+    
+    // Paredes negras indestructibles: bloquean SIEMPRE (incluso al sniper)
     for (let obstacle of gameState.obstacles) {
         if (obstacle.isBlack && !obstacle.isDestructible) {
-            if (projectile.x >= obstacle.left && projectile.x <= obstacle.right && 
-                projectile.y >= obstacle.top && projectile.y <= obstacle.bottom) {
+            const tEnter = segmentRectEnterTime(
+                prevX, prevY, projectile.x, projectile.y,
+                obstacle.left, obstacle.top, obstacle.right, obstacle.bottom
+            );
+            if (tEnter >= 0) {
                 createCollisionEffect(projectile.x, projectile.y);
-                return true;
+                return 1;
             }
         }
     }
-    return false;
+    return hitDestructible ? 0 : -1;
 }
 
 function updatePlayerPosition() {
@@ -1526,9 +1581,103 @@ function updatePlayerPosition() {
     }
 }
 
+// Daño/muerte común para cualquier fuente: proyectil directo u onda expansiva.
+// Replica exactamente el comportamiento por tipo que tenía el loop de
+// proyectiles. Devuelve true si el enemigo murió (el llamador hace el splice).
+function handleEnemyHit(enemy, amount, impactAngle) {
+    if (enemy.type === 'orange') {
+        enemy.hitsTaken += amount;
+        gameState.hits++;
+        createOrganicOrangeExplosion(enemy.x, enemy.y, enemy.radius);
+        if (enemy.element) enemy.element.remove();
+        gameState.score += 100;
+        updateScoreDisplay();
+        gameState.orangeEnemiesToCreate++;
+        
+        let currentOrangeCount = gameState.enemies.filter(e => e.type === 'orange').length;
+        let enemiesToCreate = gameState.orangeEnemiesToCreate - currentOrangeCount;
+        for (let k = 0; k < enemiesToCreate; k++) {
+            createEnemy('orange');
+        }
+        
+        if (gameState.hits % 25 === 0 && gameState.hits > 0) {
+            startSpecialEvent();
+        }
+        
+        if (shouldCreateGreenEnemy()) {
+            createGreenEnemy();
+        }
+        return true;
+    }
+    
+    if (enemy.type === 'fuchsia') {
+        enemy.hitsTaken += amount;
+        gameState.hits += amount;
+        if (enemy.hitsTaken >= 25) {
+            DIRECTED_CORPSE_SYSTEM.transformEnemyToCorpse(enemy, impactAngle);
+            gameState.score += 500;
+            updateScoreDisplay();
+            gameState.specialHits++;
+            gameState.fuchsiaEnemiesCount++;
+            
+            for (let k = 0; k < 2; k++) {
+                createEnemy('fuchsia');
+            }
+            
+            if (gameState.hits % 25 === 0 && gameState.hits > 0) {
+                startSpecialEvent();
+            }
+            
+            if (shouldCreateGreenEnemy()) {
+                createGreenEnemy();
+            }
+            return true;
+        }
+        return false;
+    }
+    
+    if (enemy.type === 'green') {
+        enemy.hitsTaken += amount;
+        gameState.hits += amount;
+        if (enemy.hitsTaken >= 100) {
+            TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
+            DIRECTED_CORPSE_SYSTEM.transformEnemyToCorpse(enemy, impactAngle);
+            gameState.score += 2000;
+            updateScoreDisplay();
+            gameState.greenHits++;
+            gameState.greenEnemiesCount--;
+            gameState.fuchsiaEnemiesCount++;
+            
+            for (let k = 0; k < 2; k++) {
+                createEnemy('fuchsia');
+            }
+            
+            if (shouldCreateGreenEnemy()) {
+                createGreenEnemy();
+            }
+            
+            if (gameState.hits % 25 === 0 && gameState.hits > 0) {
+                startSpecialEvent();
+            }
+            return true;
+        }
+        return false;
+    }
+    
+    // Otros tipos: solo acumulan daño (misma regla que tenía el juego antes)
+    enemy.hitsTaken += amount;
+    return false;
+}
+
 function updateProjectiles() {
     for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
         const projectile = gameState.projectiles[i];
+        
+        // Posicion previa del frame: la colision con obstaculos se chequea por
+        // SEGMENTO (previo -> actual) para que los proyectiles rapidos no
+        // atraviesen las paredes finas (16-50px/frame vs grosores de 2-4px).
+        const prevX = projectile.x;
+        const prevY = projectile.y;
         
         const shouldRemove = WEAPON_SYSTEM.updateProjectile(projectile);
         
@@ -1546,18 +1695,30 @@ function updateProjectiles() {
             continue;
         }
         
-        if (detectProjectileObstacleCollision(projectile)) {
-            if (projectile.weaponType === "bazooka") {
-                WEAPON_SYSTEM.applyBazookaAreaDamage(
-                    projectile.x, 
-                    projectile.y, 
-                    projectile.explosionRadius || 60, 
-                    projectile.areaDamage || 11
-                );
+        const obstacleHit = detectProjectileObstacleCollision(projectile, prevX, prevY);
+        if (obstacleHit !== -1) {
+            if (projectile.penetrating && obstacleHit === 0) {
+                // Sniper: la bala atraviesa el obstaculo; pierde energia y sigue
+                projectile.damage -= projectile.penetrationLoss;
+                if (projectile.damage <= 0) {
+                    WEAPON_SYSTEM.removeProjectile(projectile);
+                    gameState.projectiles.splice(i, 1);
+                    continue;
+                }
+            } else {
+                // Impacto bloqueante (pared negra) o municion normal
+                if (projectile.weaponType === "bazooka") {
+                    WEAPON_SYSTEM.applyBazookaAreaDamage(
+                        projectile.x, 
+                        projectile.y, 
+                        projectile.explosionRadius || 60, 
+                        projectile.areaDamage || 11
+                    );
+                }
+                WEAPON_SYSTEM.removeProjectile(projectile);
+                gameState.projectiles.splice(i, 1);
+                continue;
             }
-            WEAPON_SYSTEM.removeProjectile(projectile);
-            gameState.projectiles.splice(i, 1);
-            continue;
         }
         
         if (projectile.weaponType === "bazooka" && projectile.distanceTraveled >= projectile.maxDistance) {
@@ -1567,108 +1728,55 @@ function updateProjectiles() {
             continue;
         }
         
-        if (detectProjectileObstacleCollision(projectile)) {
-            WEAPON_SYSTEM.removeProjectile(projectile);
-            gameState.projectiles.splice(i, 1);
-            continue;
-        }
-        
         for (let j = gameState.enemies.length - 1; j >= 0; j--) {
             const enemy = gameState.enemies[j];
+            // La bala penetrante no vuelve a golpear al mismo enemigo
+            if (projectile.hitEnemies && projectile.hitEnemies.has(enemy)) continue;
             const dx = projectile.x - enemy.x;
             const dy = projectile.y - enemy.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
             const collisionDistance = (projectile.weaponType === "shotgun" ? 1.5 : 0.5) + enemy.radius;
             
-            if (distance < collisionDistance) {
-                if (enemy.type === 'orange') {
-                    createOrganicOrangeExplosion(enemy.x, enemy.y, enemy.radius);
-                    if (enemy.element) enemy.element.remove();
+            let impactado = false;
+            if (projectile.penetrating) {
+                // Balas penetrantes: detección swept (segmento-círculo). El sniper
+                // avanza 50px/frame y el chequeo punto-final le hace saltarse
+                // enemigos pequeños entre frames (tunneling de enemigos)
+                const segDx = projectile.x - prevX;
+                const segDy = projectile.y - prevY;
+                const len2 = segDx * segDx + segDy * segDy;
+                let pr = len2 > 0 ? ((enemy.x - prevX) * segDx + (enemy.y - prevY) * segDy) / len2 : 0;
+                pr = Math.max(0, Math.min(1, pr));
+                const closerX = prevX + segDx * pr;
+                const closerY = prevY + segDy * pr;
+                const dx = enemy.x - closerX;
+                const dy = enemy.y - closerY;
+                impactado = dx * dx + dy * dy < collisionDistance * collisionDistance;
+            } else {
+                const dx = projectile.x - enemy.x;
+                const dy = projectile.y - enemy.y;
+                impactado = Math.sqrt(dx * dx + dy * dy) < collisionDistance;
+            }
+            
+            if (impactado) {
+                const impactAngle = Math.atan2(projectile.speedY, projectile.speedX);
+                const enemyDied = handleEnemyHit(enemy, projectile.damage, impactAngle);
+                if (enemyDied) {
                     gameState.enemies.splice(j, 1);
                     gameState.currentEnemyCount--;
+                }
+                if (projectile.penetrating) {
+                    // Sniper: sigue atravesando; pierde energia con cada enemigo
+                    projectile.hitEnemies.add(enemy);
+                    projectile.damage -= projectile.penetrationLoss;
+                    if (projectile.damage <= 0) {
+                        WEAPON_SYSTEM.removeProjectile(projectile);
+                        gameState.projectiles.splice(i, 1);
+                        break;
+                    }
+                } else {
                     WEAPON_SYSTEM.removeProjectile(projectile);
                     gameState.projectiles.splice(i, 1);
-                    gameState.score += 100;
-                    updateScoreDisplay();
-                    gameState.hits++;
-                    gameState.orangeEnemiesToCreate++;
-                    
-                    let currentOrangeCount = gameState.enemies.filter(e => e.type === 'orange').length;
-                    let enemiesToCreate = gameState.orangeEnemiesToCreate - currentOrangeCount;
-                    for (let k = 0; k < enemiesToCreate; k++) {
-                        createEnemy('orange');
-                    }
-                    
-                    if (gameState.hits % 25 === 0 && gameState.hits > 0) {
-                        startSpecialEvent();
-                    }
-                    
-                    if (shouldCreateGreenEnemy()) {
-                        createGreenEnemy();
-                    }
-                    break;
-                } else if (enemy.type === 'fuchsia') {
-                    enemy.hitsTaken += projectile.damage;
-                    WEAPON_SYSTEM.removeProjectile(projectile);
-                    gameState.projectiles.splice(i, 1);
-                    gameState.hits += projectile.damage;
-                    
-                    if (enemy.hitsTaken >= 25) {
-                        const impactAngle = Math.atan2(projectile.speedY, projectile.speedX);
-                        DIRECTED_CORPSE_SYSTEM.transformEnemyToCorpse(enemy, impactAngle);
-                        
-                        gameState.enemies.splice(j, 1);
-                        gameState.currentEnemyCount--;
-                        gameState.score += 500;
-                        updateScoreDisplay();
-                        gameState.specialHits++;
-                        gameState.fuchsiaEnemiesCount++;
-                        
-                        for (let k = 0; k < 2; k++) {
-                            createEnemy('fuchsia');
-                        }
-                        
-                        if (gameState.hits % 25 === 0 && gameState.hits > 0) {
-                            startSpecialEvent();
-                        }
-                        
-                        if (shouldCreateGreenEnemy()) {
-                            createGreenEnemy();
-                        }
-                    }
-                    break;
-                } else if (enemy.type === 'green') {
-                    enemy.hitsTaken += projectile.damage;
-                    WEAPON_SYSTEM.removeProjectile(projectile);
-                    gameState.projectiles.splice(i, 1);
-                    gameState.hits += projectile.damage;
-                    
-                    if (enemy.hitsTaken >= 100) {
-                        TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
-                        
-                        const impactAngle = Math.atan2(projectile.speedY, projectile.speedX);
-                        DIRECTED_CORPSE_SYSTEM.transformEnemyToCorpse(enemy, impactAngle);
-                        
-                        gameState.enemies.splice(j, 1);
-                        gameState.currentEnemyCount--;
-                        gameState.greenEnemiesCount--;
-                        gameState.score += 2000;
-                        updateScoreDisplay();
-                        gameState.greenHits++;
-                        gameState.fuchsiaEnemiesCount++;
-                        
-                        for (let k = 0; k < 2; k++) {
-                            createEnemy('fuchsia');
-                        }
-                        
-                        if (shouldCreateGreenEnemy()) {
-                            createGreenEnemy();
-                        }
-                        
-                        if (gameState.hits % 25 === 0 && gameState.hits > 0) {
-                            startSpecialEvent();
-                        }
-                    }
                     break;
                 }
             }

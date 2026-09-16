@@ -1,26 +1,27 @@
 // ========== SISTEMA DE ENFRIAMIENTO PERSONALIZADO ==========
 const COOLDOWN_SYSTEM = {
-    currentCooldownShots: 0,
-    currentCooldownType: null,
+    // Municion independiente por arma: disparos gastados de cada tipo.
+    // (Antes era un solo contador global: al cambiar de arma la nueva
+    //  heredaba los disparos de la anterior en el HUD, ej. 29/30.)
+    shotsByType: {},
     
     init() {
-        this.currentCooldownShots = 0;
-        this.currentCooldownType = null;
+        this.shotsByType = {};
+    },
+    
+    getShots(weaponType) {
+        return this.shotsByType[weaponType] || 0;
     },
     
     incrementShots(weaponType) {
-        if (this.currentCooldownType !== weaponType) {
-            this.currentCooldownShots = 0;
-            this.currentCooldownType = weaponType;
-        }
-        
-        this.currentCooldownShots++;
+        // Cada arma lleva su propio contador: cambiar de arma YA NO resetea el gasto
+        this.shotsByType[weaponType] = (this.shotsByType[weaponType] || 0) + 1;
         
         const weapon = WEAPON_SYSTEM.getCurrentWeapon();
         
         WEAPON_SYSTEM.updateAmmoDisplay();
         
-        if (this.currentCooldownShots >= weapon.cooldownShots) {
+        if (this.shotsByType[weaponType] >= weapon.cooldownShots) {
             this.startCooldown(weapon.cooldownDuration, weapon.type);
             return true;
         }
@@ -89,7 +90,11 @@ const COOLDOWN_SYSTEM = {
         gameState.canShoot = true;
         gameState.isCooldownActive = false;
         
-        this.currentCooldownShots = 0;
+        // Solo la municion del arma que recarga vuelve a cero; las demas
+        // conservan su gasto (leer el tipo ANTES de limpiarlo)
+        if (gameState.cooldownWeaponType) {
+            this.shotsByType[gameState.cooldownWeaponType] = 0;
+        }
         gameState.cooldownWeaponType = null;
         
         if (cooldownIndicator) {
@@ -107,8 +112,7 @@ const COOLDOWN_SYSTEM = {
     },
     
     reset() {
-        this.currentCooldownShots = 0;
-        this.currentCooldownType = null;
+        this.shotsByType = {};
         if (gameState.cooldownTimer) {
             clearTimeout(gameState.cooldownTimer);
             gameState.cooldownTimer = null;
