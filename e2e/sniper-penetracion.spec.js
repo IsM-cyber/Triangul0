@@ -105,7 +105,11 @@ async function disparar(page) {
     gameState.mouseY = window.__m.worldY;
     shoot();
   });
-  // Esperar el desenlace REAL (regla de contratos: condicion, no clock).
+  // Regla 1 (anti-race): el disparo DEBE crear un proyectil. Si shoot() falla
+  // (cooldown/ammo no listo), esperar projectiles.length === 0 pasaría AL
+  // INSTANTE y el test sería verde sin haber comprobado nada.
+  await page.waitForFunction(() => gameState.projectiles.length >= 1, null, { timeout: 60000 });
+  // Regla 2: esperar el desenlace REAL (condicion, no clock).
   // El mundo vive: los enemigos reales recién spawneados pueden cruzar la
   // línea de tiro y falsear el escenario -> el poll los limpia en cada
   // evaluación, preservando solo los fakes del test (__test).
