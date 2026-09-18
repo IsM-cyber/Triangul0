@@ -117,29 +117,33 @@ const CANVAS_RENDER = {
         ctx.rotate(ang);
 
         const type = p.weaponType;
-        let color, w, h, glow;
+        // len = largo a lo largo de la direccion de viaje, thick = grosor.
+        // El ctx ya esta rotado hacia el tiro, asi el eje X local es el avance:
+        // dibujar la barra sobre X la hace apuntar como una bala (no placa).
+        let color, len, thick, glow, blur = 4;
 
         switch (type) {
             case 'machinegun':
-                color = '#ff3333'; w = 2; h = 4; glow = 'rgba(255,51,51,0.8)'; break;
+                color = '#ff3333'; len = 4; thick = 2; glow = 'rgba(255,51,51,0.8)'; break;
             case 'sniper':
-                color = '#00ff00'; w = 1; h = 12; glow = '#00ff00'; break;
+                // Bala tipo antitank: larga y fina, apuntando hacia donde viaja
+                color = '#00ff00'; len = 12; thick = 1; glow = '#00ff00'; blur = 1; break;
             case 'bazooka':
-                color = '#ff00ff'; w = 8; h = 4; glow = '#ff00ff'; break;
+                color = '#ff00ff'; len = 8; thick = 4; glow = '#ff00ff'; break;
             case 'minigun':
-                color = '#ff00ff'; w = 3; h = 6; glow = 'rgba(255,0,255,0.9)'; break;
+                color = '#ff00ff'; len = 6; thick = 3; glow = 'rgba(255,0,255,0.9)'; break;
             case 'shotgun':
                 color = '#ffcc00';
-                w = h = 3 * (0.8 + 0.4 * ((p.sizeVariation) || 0.5));
+                len = thick = 3 * (0.8 + 0.4 * ((p.sizeVariation) || 0.5));
                 glow = 'rgba(255,204,0,0.8)'; break;
             default: // rifle
-                color = '#222222'; w = 2; h = 2; glow = 'rgba(34,34,34,0.6)'; break;
+                color = '#222222'; len = thick = 2; glow = 'rgba(34,34,34,0.6)'; break;
         }
 
         ctx.shadowColor = glow;
-        ctx.shadowBlur = 4;
+        ctx.shadowBlur = blur;
         ctx.fillStyle = color;
-        ctx.fillRect(-w / 2, -h / 2, w, h);
+        ctx.fillRect(-len / 2, -thick / 2, len, thick);
         ctx.restore();
     },
 

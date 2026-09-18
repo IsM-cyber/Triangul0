@@ -730,17 +730,17 @@ body {
     background-color: #00ff00;
     border-radius: 0;
     z-index: 5;
-    box-shadow: 0 0 6px #00ff00, 0 0 12px #00ff00;
+    box-shadow: 0 0 2px #00ff00;
     transform: translate(-50%, -50%);
     animation: sniperTrail 0.5s linear forwards;
 }
 
 @keyframes sniperTrail {
     0% {
-        box-shadow: 0 0 6px #00ff00, 0 0 12px #00ff00;
+        box-shadow: 0 0 2px #00ff00;
     }
     100% {
-        box-shadow: 0 0 3px #00ff00, 0 0 6px #00ff00;
+        box-shadow: 0 0 1px #00ff00;
     }
 }
 

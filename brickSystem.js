@@ -54,7 +54,7 @@ const BRICK_SYSTEM = {
             brickWidth = this.BRICK_HORIZONTAL_WIDTH * scaleFactor;
             brickHeight = (isPrincipal ? this.PRINCIPAL_THICKNESS : this.MENOR_THICKNESS) * scaleFactor;
         } else {
-            brickWidth = (isPrincipal ? this.PRINCIPAL_THICKNESS : this.MENOR_THICKness) * scaleFactor;
+            brickWidth = (isPrincipal ? this.PRINCIPAL_THICKNESS : this.MENOR_THICKNESS) * scaleFactor;
             brickHeight = this.BRICK_VERTICAL_HEIGHT * scaleFactor;
         }
         
