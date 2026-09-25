@@ -300,6 +300,12 @@ document.addEventListener('keydown', (e) => {
         WEAPON_SYSTEM.switchWeapon(6);
     }
     
+    // T: atajo de prueba para ver el evento especial sin tener que
+    // matar enemigos naranjas. Usa el mismo entry point que el juego.
+    if (key === 't' && !e.repeat) {
+        startSpecialEvent();
+    }
+    
     if (e.key === 'r' || e.key === 'R') {
         console.log("Reiniciando juego con tecla R...");
         initGame();

@@ -904,26 +904,357 @@ function createGreenEnemy() {
     }
 }
 
+const SPECIAL_EVENT_WAVE_MAX_RADIUS = 150;
+const SPECIAL_EVENT_WAVE_DURATION_MS = 360;
+// Dano del frente: el doble exacto de la onda de la bazooka (areaDamage 11
+// -> 22). Se deriva del dato de la bazooka y no de un numero suelto para que la
+// relacion no se desincronice si alguien reequilibra la bazooka. La onda del
+// evento atraviesa paredes y barre 150px, asi que tiene que pegar mas fuerte
+// que una sola explosion de 60px de radio.
+const SPECIAL_EVENT_WAVE_DAMAGE = WEAPON_SYSTEM.BAZOOKA.areaDamage * 2;
+let specialEventWaveActive = false;
+let specialEventWavePending = false;
+// Token de propiedad de la onda: cada frente incrementa el contador, asi un
+// paso de una onda vieja que llega tarde solo puede limpiar SUS banderas. Si
+// una onda nueva ya arranco en la partida reiniciada, esas banderas son suyas.
+let specialEventWaveToken = 0;
+
+// Distancia desde el centro del frente hasta el rectangulo del obstaculo. Se usa
+// la caja real y no center + halfSize (como hace la bazooka) para que un muro
+// largo que asoma dentro del frente cuente como alcanzado.
+function getObstacleReachDistance(x, y, obstacle) {
+    const collisionSystem = window.CollisionSystem;
+    let bounds = null;
+    if (collisionSystem && typeof collisionSystem.getObstacleBounds === 'function') {
+        bounds = collisionSystem.getObstacleBounds(obstacle);
+    }
+    if (!bounds) {
+        const halfWidth = (obstacle.width || 8) / 2;
+        const halfHeight = (obstacle.height || 8) / 2;
+        bounds = {
+            left: obstacle.x - halfWidth,
+            right: obstacle.x + halfWidth,
+            top: obstacle.y - halfHeight,
+            bottom: obstacle.y + halfHeight,
+        };
+    }
+
+    const nearestX = Math.max(bounds.left, Math.min(x, bounds.right));
+    const nearestY = Math.max(bounds.top, Math.min(y, bounds.bottom));
+    return Math.hypot(x - nearestX, y - nearestY);
+}
+
+function applySpecialEventWaveDamage(x, y) {
+    // Un reinicio (tecla R) reemplaza gameState por completo. Guardar la
+    // referencia permite detectar el cambio y abandonar los pasos viejos.
+    const waveState = gameState;
+    const waveToken = ++specialEventWaveToken;
+    specialEventWaveActive = true;
+    const hitEnemies = new Set();
+    const hitObstacles = new Set();
+    const steps = 6;
+    const stepDuration = SPECIAL_EVENT_WAVE_DURATION_MS / steps;
+
+    for (let step = 1; step <= steps; step++) {
+        setTimeout(() => {
+            // Un reinicio (tecla R) reemplaza gameState por completo: los pasos
+            // pendientes de la onda anterior no deben tocar la partida nueva.
+            if (gameState !== waveState) {
+                // La partida se reinicio: la onda vieja ya no tiene sentido y
+                // no debe tocar la partida nueva. Solo libera las banderas si
+                // todavia le pertenecen; si otra onda ya arranco en la partida
+                // nueva, esas banderas son suyas y pisarlas dejaria dos
+                // eventos concurrentes con naranjas trabadas.
+                if (waveToken === specialEventWaveToken) {
+                    specialEventWaveActive = false;
+                    specialEventWavePending = false;
+                }
+                return;
+            }
+
+            try {
+                const frontRadius = SPECIAL_EVENT_WAVE_MAX_RADIUS * (step / steps);
+
+                for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+                    const enemy = gameState.enemies[i];
+                    if (enemy.merging === true || hitEnemies.has(enemy)) continue;
+                    // Enemigos sin posicion finita son artefactos de spawn fuera
+                    // de pantalla: quedan fuera del alcance de la onda.
+                    if (!Number.isFinite(enemy.x) || !Number.isFinite(enemy.y)) continue;
+
+                    const distance = Math.hypot(enemy.x - x, enemy.y - y);
+                    if (distance <= frontRadius + enemy.radius) {
+                        hitEnemies.add(enemy);
+                        const impactAngle = Math.atan2(enemy.y - y, enemy.x - x);
+                        WEAPON_SYSTEM.createAreaDamageEffect(enemy.x, enemy.y);
+
+                        if (handleEnemyHit(enemy, SPECIAL_EVENT_WAVE_DAMAGE, impactAngle)) {
+                            gameState.enemies.splice(i, 1);
+                            gameState.currentEnemyCount--;
+                        }
+                    }
+                }
+                // La honda tambien derriba muros de ladrillo, igual que la
+                // explosion de la bazooka: el evento no queda solo en damagear enemigos.
+                // Cada muro recibe un solo golpe por onda porque el frente pasa una vez
+                // por lugar, asi que un ladrillo con vida alta aguanta la pasada.
+                for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+                    const obstacle = gameState.obstacles[i];
+                    if (!obstacle || obstacle.isDestructible !== true) continue;
+                    if (hitObstacles.has(obstacle)) continue;
+                    // Sin vida no hay nada que damagear: un destructible sin health es
+                    // un artefacto de spawn, no un ladrillo.
+                    if (!Number.isFinite(obstacle.health)) continue;
+                
+                    if (getObstacleReachDistance(x, y, obstacle) > frontRadius) continue;
+                
+                    hitObstacles.add(obstacle);
+                    obstacle.health -= SPECIAL_EVENT_WAVE_DAMAGE;
+                    const damageLevel = BRICK_SYSTEM.BRICK_HEALTH - obstacle.health;
+                    BRICK_SYSTEM.createBrickImpactEffect(obstacle.x, obstacle.y, damageLevel);
+                    BRICK_SYSTEM.applyDamageVisual(obstacle.element, damageLevel);
+                
+                    if (obstacle.health <= 0) {
+                        BRICK_SYSTEM.destroyBrick(obstacle, i);
+                    }
+                }
+            } finally {
+                // El cierre va en finally: si createAreaDamageEffect o
+                // handleEnemyHit lanzan, la bandera debe liberarse igual o el
+                // evento especial quedaria deshabilitado en toda la sesion.
+                if (step === steps) {
+                    specialEventWaveActive = false;
+                    const pending = specialEventWavePending;
+                    specialEventWavePending = false;
+                    if (pending) startSpecialEvent();
+                }
+            }
+        }, stepDuration * step);
+    }
+}
+
+function formatSpecialEventPoint(point) {
+    const x = Math.round(point.x * 10) / 10;
+    const y = Math.round(point.y * 10) / 10;
+    return `${x} ${y}`;
+}
+    
+function serializeSpecialEventPath(points) {
+    const [start, ...segments] = points;
+    return `M ${formatSpecialEventPoint(start)} ${segments
+        .map(point => `L ${formatSpecialEventPoint(point)}`)
+        .join(' ')}`;
+}
+    
+function generateSpecialEventBolts(random = Math.random) {
+    const fullTurn = Math.PI * 2;
+    const trunkCount = 6 + Math.floor(random() * 4);
+    const baseAngle = random() * fullTurn;
+    const sectorAngle = fullTurn / trunkCount;
+    const primaryPoints = [];
+    const secondaryPoints = [];
+    const trunks = [];
+
+    for (let trunkIndex = 0; trunkIndex < trunkCount; trunkIndex++) {
+        const segmentCount = 10 + Math.floor(random() * 5);
+        const trunkLength = 128 + random() * 22;
+        const segmentLength = trunkLength / segmentCount;
+        let angle = baseAngle + trunkIndex * sectorAngle
+            + (random() - 0.5) * sectorAngle * 0.35;
+        const points = [{ x: 0, y: 0 }];
+
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+            if (segmentIndex > 0) {
+                angle += (random() - 0.5) * 0.6;
+                if (random() < 0.35) {
+                    angle += (random() < 0.5 ? -1 : 1) *
+                        (0.5 + random() * 0.5);
+                }
+            }
+
+            const previous = points[points.length - 1];
+            const stepLength = segmentLength * (0.7 + random() * 0.6);
+            points.push({
+                x: previous.x + Math.cos(angle) * stepLength,
+                y: previous.y + Math.sin(angle) * stepLength
+            });
+        }
+
+        primaryPoints.push(points);
+        trunks.push(points);
+    }
+
+    trunks.forEach(trunk => {
+        const latestOriginIndex = Math.max(
+            4,
+            Math.floor((trunk.length - 1) * 0.55)
+        );
+        const firstOriginIndex = 3 + Math.floor(
+            random() * Math.max(1, latestOriginIndex - 3)
+        );
+        const originIndexes = [...new Set([firstOriginIndex, latestOriginIndex])];
+
+        originIndexes.forEach(originIndex => {
+            const origin = trunk[originIndex];
+            const previous = trunk[Math.max(0, originIndex - 1)];
+            const next = trunk[Math.min(trunk.length - 1, originIndex + 1)];
+            const trunkDirection = Math.atan2(
+                next.y - previous.y,
+                next.x - previous.x
+            );
+            const side = random() < 0.5 ? -1 : 1;
+            const divergence = 0.5 + random() * 0.8;
+            const branchSegmentCount = 2 + Math.floor(random() * 4);
+            const branchPoints = [origin];
+            let branchAngle = trunkDirection + side * divergence;
+
+            for (let segmentIndex = 0; segmentIndex < branchSegmentCount; segmentIndex++) {
+                if (segmentIndex > 0) {
+                    branchAngle += (random() - 0.5) * 0.55;
+                }
+
+                const branchPoint = branchPoints[branchPoints.length - 1];
+                const stepLength = 7 + random() * 5;
+                branchPoints.push({
+                    x: branchPoint.x + Math.cos(branchAngle) * stepLength,
+                    y: branchPoint.y + Math.sin(branchAngle) * stepLength
+                });
+            }
+
+            secondaryPoints.push(branchPoints);
+
+            // Segundo nivel: la rama vuelve a bifurcarse para que el conjunto
+            // lea como arbol ramificado y no como una estrella de radios.
+            if (random() < 0.65) {
+                const subOriginIndex = 1 + Math.floor(
+                    random() * Math.max(1, branchPoints.length - 2)
+                );
+                const subOrigin = branchPoints[subOriginIndex];
+                const subPrevious = branchPoints[Math.max(0, subOriginIndex - 1)];
+                const subNext = branchPoints[Math.min(branchPoints.length - 1, subOriginIndex + 1)];
+                const branchDirection = Math.atan2(
+                    subNext.y - subPrevious.y,
+                    subNext.x - subPrevious.x
+                );
+                const subSide = random() < 0.5 ? -1 : 1;
+                let subAngle = branchDirection + subSide * (0.45 + random() * 0.675);
+                const subSegmentCount = 1 + Math.floor(random() * 3);
+                const subPoints = [subOrigin];
+
+                for (let subIndex = 0; subIndex < subSegmentCount; subIndex++) {
+                    if (subIndex > 0) {
+                        subAngle += (random() - 0.5) * 0.55;
+                    }
+
+                    const subPreviousPoint = subPoints[subPoints.length - 1];
+                    const subStepLength = 5 + random() * 4;
+                    subPoints.push({
+                        x: subPreviousPoint.x + Math.cos(subAngle) * subStepLength,
+                        y: subPreviousPoint.y + Math.sin(subAngle) * subStepLength
+                    });
+                }
+
+                secondaryPoints.push(subPoints);
+            }
+        });
+    });
+
+    const allPoints = [...primaryPoints, ...secondaryPoints];
+    const maxAbs = allPoints.reduce((max, points) => {
+        for (const point of points) {
+            max = Math.max(max, Math.abs(point.x), Math.abs(point.y));
+        }
+        return max;
+    }, 0);
+    const coordinateLimit = 150;
+
+    if (maxAbs > coordinateLimit) {
+        const scale = coordinateLimit / maxAbs;
+        const scaledPoints = new Set();
+        for (const points of allPoints) {
+            for (const point of points) {
+                if (scaledPoints.has(point)) continue;
+                scaledPoints.add(point);
+                point.x *= scale;
+                point.y *= scale;
+            }
+        }
+    }
+
+    return {
+        primary: primaryPoints.map(serializeSpecialEventPath),
+        secondary: secondaryPoints.map(serializeSpecialEventPath),
+    };
+}
+
+function createSpecialEventExplosion(x, y) {
+    const lightning = document.createElement('div');
+    lightning.className = 'special-event-lightning';
+    lightning.setAttribute('aria-hidden', 'true');
+    lightning.style.left = `${x}px`;
+    lightning.style.top = `${y}px`;
+
+    const generatedBolts = generateSpecialEventBolts(Math.random);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '-160 -160 320 320');
+    svg.setAttribute('class', 'special-event-lightning-svg');
+    svg.setAttribute('focusable', 'false');
+    svg.innerHTML = `
+        <circle class="special-event-lightning-halo" cx="0" cy="0" r="72"></circle>
+        <circle class="special-event-lightning-ring" cx="0" cy="0" r="48"></circle>
+        <circle class="special-event-lightning-core" cx="0" cy="0" r="22"></circle>
+        <g class="special-event-bolts" transform="scale(0.42)">
+        </g>
+    `;
+
+    const boltGroup = svg.querySelector('.special-event-bolts');
+    for (const pathData of generatedBolts.primary) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'special-event-bolt');
+        path.setAttribute('d', pathData);
+        boltGroup.appendChild(path);
+    }
+
+    for (const pathData of generatedBolts.secondary) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'special-event-bolt secondary');
+        path.setAttribute('d', pathData);
+        boltGroup.appendChild(path);
+    }
+
+    lightning.appendChild(svg);
+    worldContainer.appendChild(lightning);
+    gameContainer.classList.add('screen-shake');
+
+    setTimeout(() => {
+        lightning.remove();
+        // Dos descargas pueden solaparse (por ejemplo, dos pulsaciones de T).
+        // Cada timer quita su nodo, pero la clase de screen-shake solo se
+        // retira cuando ya no queda ninguna descarga viva.
+        if (!worldContainer.querySelector('.special-event-lightning')) {
+            gameContainer.classList.remove('screen-shake');
+        }
+    }, 950);
+
+    applySpecialEventWaveDamage(x, y);
+}
+
 function startSpecialEvent() {
+    // Un evento ya activo no debe iniciar otra cadena de merge: los
+    // proyectiles que ya estaban en vuelo pueden seguir durante la
+    // animación y volverían a activar este bloque.
+    if (gameState.isSpecialEvent || gameState.mergingEnemies) return;
+    // La onda de un evento que acaba de terminar no puede encadenar otro evento
+    // en medio, pero el hito de 25 impactos tampoco puede perderse: queda
+    // pendiente y se dispara en cuanto termina la onda.
+    if (specialEventWaveActive) {
+        specialEventWavePending = true;
+        return;
+    }
+
     gameState.isSpecialEvent = true;
     gameState.mergingEnemies = true;
     gameState.fuchsiaEnemiesCount++;
-    
-    const notification = document.createElement('div');
-    notification.className = 'special-event-notification';
-    notification.textContent = '¡EVENTO ESPECIAL!';
-    notification.style.opacity = '1';
-    worldContainer.appendChild(notification);
-    
-    setTimeout(() => {
-        notification.style.left = `${gameState.playerX}px`;
-        notification.style.top = `${gameState.playerY}px`;
-    }, 0);
-    
-    setTimeout(() => {
-        notification.style.opacity = '0';
-        setTimeout(() => notification.remove(), 1000);
-    }, 2000);
     
     gameState.enemies.forEach(enemy => {
         if (enemy.type === 'orange' && enemy.active) {
@@ -936,41 +1267,53 @@ function startSpecialEvent() {
 }
 
 function mergeEnemiesToCenter() {
+    // Un reinicio o un evento cancelado puede dejar un callback viejo en
+    // la cola. No debe resucitar la animación después de finalizada.
+    if (!gameState.mergingEnemies) return;
+
     const mergeSpeed = 3;
-    let enemiesToRemove = [];
-    
+    const enemiesToRemove = [];
     const activeEnemies = getActiveEnemies();
-    
-    activeEnemies.forEach((enemy, index) => {
-        if (enemy.type === 'orange' && enemy.merging) {
-            const dx = gameState.playerX - enemy.x;
-            const dy = gameState.playerY - enemy.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance > 5) {
-                enemy.x += (dx / distance) * mergeSpeed;
-                enemy.y += (dy / distance) * mergeSpeed;
-                if (enemy.element) {
-                    enemy.element.style.left = `${enemy.x - enemy.radius}px`;
-                    enemy.element.style.top = `${enemy.y - enemy.radius}px`;
-                }
-            } else {
-                enemiesToRemove.push(enemy);
+
+    for (const enemy of activeEnemies) {
+        if (enemy.type !== 'orange' || !enemy.merging) continue;
+
+        const dx = gameState.playerX - enemy.x;
+        const dy = gameState.playerY - enemy.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > 30) {
+            enemy.x += (dx / distance) * mergeSpeed;
+            enemy.y += (dy / distance) * mergeSpeed;
+            if (enemy.element) {
+                enemy.element.style.left = `${enemy.x - enemy.radius}px`;
+                enemy.element.style.top = `${enemy.y - enemy.radius}px`;
             }
-        }
-    });
-    
-    for (let enemy of enemiesToRemove) {
-        const index = gameState.enemies.indexOf(enemy);
-        if (index !== -1 && gameState.enemies[index] && gameState.enemies[index].element) {
-            gameState.enemies[index].element.remove();
-            gameState.enemies.splice(index, 1);
-            gameState.currentEnemyCount--;
+        } else {
+            // Marcarlo antes de quitarlo evita que una referencia vieja
+            // vuelva a considerarlo parte de la fusión.
+            enemy.merging = false;
+            enemiesToRemove.push(enemy);
         }
     }
-    
-    const stillMerging = activeEnemies.some(enemy => enemy.type === 'orange' && enemy.merging);
-    
+
+    for (const enemy of enemiesToRemove) {
+        const index = gameState.enemies.indexOf(enemy);
+        if (index === -1) continue;
+
+        const removedEnemy = gameState.enemies[index];
+        if (removedEnemy.element) removedEnemy.element.remove();
+        gameState.enemies.splice(index, 1);
+        gameState.currentEnemyCount = Math.max(0, gameState.currentEnemyCount - 1);
+    }
+
+    // Consultar el estado actual, no el snapshot activeEnemies: los
+    // enemigos eliminados ya no deben mantener viva la animación para
+    // siempre. Este era el origen del bloqueo del evento especial.
+    const stillMerging = gameState.enemies.some(
+        enemy => enemy.type === 'orange' && enemy.merging
+    );
+
     if (!stillMerging) {
         finishSpecialEvent();
     } else {
@@ -1028,6 +1371,9 @@ function finishSpecialEvent() {
     if (shouldCreateGreenEnemy()) {
         createGreenEnemy();
     }
+
+    // El relámpago marca la culminación de la fusión, no su inicio.
+    createSpecialEventExplosion(gameState.playerX, gameState.playerY);
 }
 
 function detectBorderCollisions() {
