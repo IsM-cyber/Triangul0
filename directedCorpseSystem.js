@@ -515,8 +515,15 @@ const DIRECTED_CORPSE_SYSTEM = {
                     
                                 // No empujar al jugador dentro de un obstáculo (muro de ladrillos):
                                 // si el destino choca, cortar el empuje y quedarse pegado al borde.
-                                const collisionCheck = checkPlayerCollisionAtPosition(nextX, nextY);
+                                const collisionCheck = checkPlayerCollisionAtPosition(
+                                    nextX,
+                                    nextY,
+                                    gameState.playerX,
+                                    gameState.playerY
+                                );
                                 if (collisionCheck.collided) {
+                                    gameState.playerX = collisionCheck.safeX;
+                                    gameState.playerY = collisionCheck.safeY;
                                     return;
                                 }
                     

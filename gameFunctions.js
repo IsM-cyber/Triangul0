@@ -24,26 +24,76 @@ function calculateDirectionalSpeed(moveAngle, lookAngle) {
     return baseSpeed * speedMultiplier;
 }
 
-function checkPlayerCollisionAtPosition(x, y) {
-    const playerRadius = 12;
-    
-    // Spatial hash: solo obstáculos cerca de la posición (antes barría los ~3000)
-    const nearby = obstacleGrid.getNearbyObstacles(x, y, 100);
-    for (let obstacle of nearby) {
-        if (!obstacle.isBlack && !obstacle.isDestructible) continue;
-        
-        const closestX = Math.max(obstacle.left, Math.min(x, obstacle.right));
-        const closestY = Math.max(obstacle.top, Math.min(y, obstacle.bottom));
-        const dx = x - closestX;
-        const dy = y - closestY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance < playerRadius) {
-            return { collided: true, obstacle: obstacle, distance: distance, dx: dx, dy: dy };
-        }
+// Match the compact 16px player silhouette instead of adding a broad
+// invisible hitbox. The swept solver still prevents tunneling.
+const PLAYER_COLLISION_RADIUS = 8;
+
+function isSolidObstacle(obstacle) {
+    return Boolean(obstacle && (obstacle.isBlack || obstacle.isDestructible));
+}
+
+function getSweptObstacles(prevX, prevY, x, y, radius) {
+    // The broad-phase must cover the whole segment. Querying only the final
+    // position lets a fast entity skip a wall between two frames.
+    const midpointX = (prevX + x) / 2;
+    const midpointY = (prevY + y) / 2;
+    const halfDistance = Math.hypot(x - prevX, y - prevY) / 2;
+    const queryRadius = halfDistance + radius + 1;
+    const nearby = obstacleGrid.getNearbyObstacles(midpointX, midpointY, queryRadius);
+    const seen = new Set();
+    const candidates = [];
+
+    for (const obstacle of nearby) {
+        if (seen.has(obstacle) || !isSolidObstacle(obstacle)) continue;
+        seen.add(obstacle);
+        candidates.push(obstacle);
     }
-    
-    return { collided: false };
+
+    return candidates;
+}
+
+function sweepEntityAgainstObstacles(prevX, prevY, x, y, radius) {
+    const collisionSystem = window.CollisionSystem;
+    if (!collisionSystem || typeof collisionSystem.sweepCircleAgainstObstacles !== 'function') {
+        return { x, y, collision: false, obstacle: null };
+    }
+
+    return collisionSystem.sweepCircleAgainstObstacles(
+        prevX,
+        prevY,
+        x,
+        y,
+        radius,
+        getSweptObstacles(prevX, prevY, x, y, radius)
+    );
+}
+
+function checkPlayerCollisionAtPosition(x, y, prevX = gameState.playerX, prevY = gameState.playerY) {
+    const result = sweepEntityAgainstObstacles(
+        prevX,
+        prevY,
+        x,
+        y,
+        PLAYER_COLLISION_RADIUS
+    );
+
+    if (!result.collision) return { collided: false };
+
+    const hitX = Number.isFinite(result.hitX) ? result.hitX : result.x;
+    const hitY = Number.isFinite(result.hitY) ? result.hitY : result.y;
+    const dx = hitX - result.x;
+    const dy = hitY - result.y;
+    const distance = Math.hypot(dx, dy);
+
+    return {
+        collided: true,
+        obstacle: result.obstacle,
+        distance,
+        dx,
+        dy,
+        safeX: result.x,
+        safeY: result.y,
+    };
 }
 
 function updateHealthBar() {
@@ -1006,30 +1056,22 @@ function detectEnemyCollisions() {
 
 function detectObstacleCollisions() {
     const activeEnemies = getActiveEnemies();
-    
-    for (let enemy of activeEnemies) {
-        // Usar spatial hash: solo obstáculos en las celdas alrededor del enemigo,
-        // en vez de barrer los ~3000 obstáculos completos cada frame.
-        // El radio cubre el tamaño máximo de enemigo + margen de celda.
-        const radius = Math.max(enemy.radius || 10, 80) + 40;
-        const nearby = obstacleGrid.getNearbyObstacles(enemy.x, enemy.y, radius);
-        
-        for (let obstacle of nearby) {
-            if (!obstacle.isBlack && !obstacle.isDestructible) continue;
-            
-            const closestX = Math.max(obstacle.left, Math.min(enemy.x, obstacle.right));
-            const closestY = Math.max(obstacle.top, Math.min(enemy.y, obstacle.bottom));
-            const dx = enemy.x - closestX;
-            const dy = enemy.y - closestY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            if (distance < enemy.radius) {
-                const overlap = enemy.radius - distance;
-                const separationX = (dx / distance) * overlap * 1.1;
-                const separationY = (dy / distance) * overlap * 1.1;
-                enemy.x += separationX;
-                enemy.y += separationY;
-            }
+
+    for (const enemy of activeEnemies) {
+        const prevX = Number.isFinite(enemy.prevX) ? enemy.prevX : enemy.x;
+        const prevY = Number.isFinite(enemy.prevY) ? enemy.prevY : enemy.y;
+        const radius = enemy.radius || 10;
+        const result = sweepEntityAgainstObstacles(
+            prevX,
+            prevY,
+            enemy.x,
+            enemy.y,
+            radius
+        );
+
+        if (result.collision) {
+            enemy.x = result.x;
+            enemy.y = result.y;
         }
     }
 }
@@ -1244,66 +1286,34 @@ function detectAndApplyCorpseEffect() {
     }
 }
 
-function detectPlayerObstacleCollision() {
-    gameState.playerPrevX = gameState.playerX;
-    gameState.playerPrevY = gameState.playerY;
-    
-    // Spatial hash: solo obstáculos cerca del jugador (antes barría los ~3000)
-    const nearby = obstacleGrid.getNearbyObstacles(gameState.playerX, gameState.playerY, 100);
-    for (let obstacle of nearby) {
-        if (!obstacle.isBlack && !obstacle.isDestructible) continue;
-        
-        const closestX = Math.max(obstacle.left, Math.min(gameState.playerX, obstacle.right));
-        const closestY = Math.max(obstacle.top, Math.min(gameState.playerY, obstacle.bottom));
-        const dx = gameState.playerX - closestX;
-        const dy = gameState.playerY - closestY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const playerRadius = 12;
-        
-        if (distance < playerRadius) {
-            const overlap = playerRadius - distance;
-            if (overlap > 0) {
-                // Evitar división por cero en colNormal (NaN) cuando el jugador está
-                // exactamente en el centro del obstáculo (distance === 0)
-                let colNormalX = 0, colNormalY = 0;
-                if (distance > 0) {
-                    colNormalX = dx / distance;
-                    colNormalY = dy / distance;
-                }
-                const playerDX = gameState.playerX - gameState.playerPrevX;
-                const playerDY = gameState.playerY - gameState.playerPrevY;
-                
-                if (playerDX !== 0 || playerDY !== 0) {
-                    const moveMagnitude = Math.sqrt(playerDX * playerDX + playerDY * playerDY);
-                    const moveNormalX = playerDX / moveMagnitude;
-                    const moveNormalY = playerDY / moveMagnitude;
-                    const dot = moveNormalX * colNormalX + moveNormalY * colNormalY;
-                    
-                    if (dot > 0) {
-                        gameState.playerX -= moveNormalX * overlap * 1.1;
-                        gameState.playerY -= moveNormalY * overlap * 1.1;
-                    } else if (distance > 0) {
-                        gameState.playerX += colNormalX * overlap * 1.1;
-                        gameState.playerY += colNormalY * overlap * 1.1;
-                    } else {
-                        // distance === 0: empujar en dirección aleatoria estable por magnitud
-                        gameState.playerX -= moveNormalX * overlap * 1.1;
-                        gameState.playerY -= moveNormalY * overlap * 1.1;
-                    }
-                } else if (distance > 0) {
-                    gameState.playerX += colNormalX * overlap * 1.1;
-                    gameState.playerY += colNormalY * overlap * 1.1;
-                }
-                
-                if (gameState.turboActive) {
-                    createCollisionEffect(gameState.playerX, gameState.playerY);
-                    gameState.turboRunning = false;
-                    gameState.turboActive = false;
-                    gameState.turboMode = false;
-                    player.classList.remove('turbo-active');
-                }
-            }
-        }
+function detectPlayerObstacleCollision(
+    prevX = gameState.playerPrevX ?? gameState.playerX,
+    prevY = gameState.playerPrevY ?? gameState.playerY
+) {
+    // Keep the actual frame origin. Overwriting this after movement makes the
+    // resolution vector zero and was the source of persistent penetration.
+    gameState.playerPrevX = prevX;
+    gameState.playerPrevY = prevY;
+
+    const result = sweepEntityAgainstObstacles(
+        prevX,
+        prevY,
+        gameState.playerX,
+        gameState.playerY,
+        PLAYER_COLLISION_RADIUS
+    );
+
+    if (!result.collision) return;
+
+    gameState.playerX = result.x;
+    gameState.playerY = result.y;
+
+    if (gameState.turboActive) {
+        createCollisionEffect(gameState.playerX, gameState.playerY);
+        gameState.turboRunning = false;
+        gameState.turboActive = false;
+        gameState.turboMode = false;
+        player.classList.remove('turbo-active');
     }
 }
 
@@ -1402,6 +1412,9 @@ function detectProjectileObstacleCollision(projectile, prevX, prevY) {
 
 function updatePlayerPosition() {
     if (!gameState.gameActive || gameState.mergingEnemies) return;
+
+    const movementStartX = gameState.playerX;
+    const movementStartY = gameState.playerY;
     
     detectSlowZones();
     let currentSpeed = gameState.playerSpeed;
@@ -1420,31 +1433,30 @@ function updatePlayerPosition() {
         player.classList.add('turbo-active');
         
         const steps = 4;
-        let stepSpeed = currentSpeed / steps;
-        let collisionDetected = false;
-        
+        const stepSpeed = currentSpeed / steps;
+
         for (let i = 0; i < steps; i++) {
             const newX = gameState.playerX + Math.cos(gameState.turboAngle) * stepSpeed;
             const newY = gameState.playerY + Math.sin(gameState.turboAngle) * stepSpeed;
-            
-            const collisionCheck = checkPlayerCollisionAtPosition(newX, newY);
-            
+
+            const collisionCheck = checkPlayerCollisionAtPosition(
+                newX,
+                newY,
+                gameState.playerX,
+                gameState.playerY
+            );
+
             if (collisionCheck.collided) {
-                collisionDetected = true;
-                
+                gameState.playerX = collisionCheck.safeX;
+                gameState.playerY = collisionCheck.safeY;
+
                 createCollisionEffect(gameState.playerX, gameState.playerY);
-                
+
                 gameState.turboRunning = false;
                 gameState.turboActive = false;
                 gameState.turboMode = false;
                 player.classList.remove('turbo-active');
-                
-                if (collisionCheck.distance > 0) {
-                    const pushDistance = 12 - collisionCheck.distance + 2;
-                    gameState.playerX -= (collisionCheck.dx / collisionCheck.distance) * pushDistance;
-                    gameState.playerY -= (collisionCheck.dy / collisionCheck.distance) * pushDistance;
-                }
-                
+
                 break;
             } else {
                 gameState.playerX = newX;
@@ -1501,8 +1513,8 @@ function updatePlayerPosition() {
         }
     }
     
-    detectPlayerObstacleCollision();
-    
+    detectPlayerObstacleCollision(movementStartX, movementStartY);
+
     updateCamera();
     
     const playerScreenX = gameState.playerX - gameState.cameraX;
