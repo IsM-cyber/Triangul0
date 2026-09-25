@@ -264,8 +264,11 @@ const CANVAS_RENDER = {
             // Tamaño variable replicando las manchas originales (small/medium/large)
             let sz = s.size || 0.5;
             sz = 2 + sz * 6; // size 0.3-0.7 -> ~4-6px; default 5px
-            // Color gris, igual que original (100-180)
-            const gray = 100 + Math.floor(((s.idx = (s.idx||0)+1) % 80)); // determinista-ish
+            // Static irregular grayscale: assign one value per rubble item.
+            if (s.grayValue === undefined) {
+                s.grayValue = 100 + Math.floor(Math.random() * 80);
+            }
+            const gray = s.grayValue;
             ctx.fillStyle = 'rgba(' + gray + ',' + gray + ',' + gray + ',0.5)';
             if ((s.shape || 0.5) > 0.5) {
                 ctx.fillRect(sx - sz/2, sy - sz/2, sz, sz);
