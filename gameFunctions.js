@@ -177,66 +177,110 @@ function updateCamera() {
 let minimapRegionCache = null;   // { centerX, centerY, elements: [divs...] }
 let minimapPlayerEl = null;      // div del indicador del jugador (se mueve a mano)
 
-function updateMinimapCached() {
-    if (!gameState.minimapVisible || !minimap) return;
-    
-    const centerX = gameState.currentRegionX;
-    const centerY = gameState.currentRegionY;
-    
-    // 1) Reconstruir las 25 regiones SOLO si cambió la región central
-    if (!minimapRegionCache || minimapRegionCache.centerX !== centerX || minimapRegionCache.centerY !== centerY) {
-        // Limpiar todo y reconstruir las regiones fijas
+    const MINIMAP_SIZE = 120;
+    const MINIMAP_CENTER = MINIMAP_SIZE / 2;
+    const MINIMAP_SPAN = REGION_WIDTH * 3;
+    const MINIMAP_SCALE = MINIMAP_SIZE / MINIMAP_SPAN;
+    const MINIMAP_RANGE = MINIMAP_SPAN / 2;
+    const MINIMAP_THROTTLE_MS = 66;
+    const MINIMAP_ENEMY_MIN_R = 2;
+    const MINIMAP_OBSTACLE_MARGIN = 140;
+    const MINIMAP_MIN_SIZ = 1;
+    const MINIMAP_WALL_SIZ = 2;
+    const MINIMAP_SLOW = { fill: '#0f3460', border: '#0cc0df' };
+    const MINIMAP_BLACK = { fill: '#000000', border: '#333333' };
+    const MINIMAP_BRICK_COLORS = ['#888888','#888888','#999999','#aaaaaa','#cccccc','#eeeeee','#ffffff'];
+    const MINIMAP_ENEMY_COLORS = { orange: '#ff9a00', fuchsia: '#ff00ff', green: '#00ff00' };
+    const MINIMAP_PLAYER_COLOR = '#e94560';
+    let minimapCanvas = null;
+    let minimapCtx = null;
+    let minimapLastUpdate = 0;
+    const minimapObstacleSeen = new Set();
+
+    function ensureMinimapCanvas() {
+        if (minimapCanvas && minimapCanvas.isConnected) return true;
+        if (!minimap) return false;
         minimap.innerHTML = '';
-        
-        const regionEls = [];
-        for (let y = centerY - 2; y <= centerY + 2; y++) {
-            for (let x = centerX - 2; x <= centerX + 2; x++) {
-                const region = document.createElement('div');
-                region.className = 'minimap-region';
-                region.style.cssText = `
-                    width:20px;
-                    height:20px;
-                    left:${(x - (centerX - 2)) * 22 + 10}px;
-                    top:${(y - (centerY - 2)) * 22 + 10}px;
-                `;
-                
-                if (x === centerX && y === centerY) {
-                    region.classList.add('active');
+        minimapCanvas = document.createElement('canvas');
+        const dpr = window.devicePixelRatio || 1;
+        minimapCanvas.width = MINIMAP_SIZE * dpr;
+        minimapCanvas.height = MINIMAP_SIZE * dpr;
+        minimapCanvas.style.width = MINIMAP_SIZE + 'px';
+        minimapCanvas.style.height = MINIMAP_SIZE + 'px';
+        minimapCtx = minimapCanvas.getContext('2d');
+        minimapCtx.scale(dpr, dpr);
+        minimap.appendChild(minimapCanvas);
+        return true;
+    }
+
+    function updateMinimapCached() {
+        if (!gameState.minimapVisible || !minimap) return;
+        const now = performance.now();
+        if (now - minimapLastUpdate < MINIMAP_THROTTLE_MS) return;
+        minimapLastUpdate = now;
+        if (!ensureMinimapCanvas()) return;
+        const ctx = minimapCtx;
+        const px = gameState.playerX;
+        const py = gameState.playerY;
+        ctx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+        const nearby = obstacleGrid.getNearbyObstacles(px, py, MINIMAP_RANGE + MINIMAP_OBSTACLE_MARGIN);
+        minimapObstacleSeen.clear();
+        for (let pass = 0; pass < 2; pass++) {
+            for (let i = 0; i < nearby.length; i++) {
+                const o = nearby[i];
+                const isSlow = !!o.isSlow;
+                const isBlack = !!o.isBlack;
+                const isBrick = !!o.isBrick;
+                if (!isSlow && !isBlack && !isBrick) continue;
+                if (pass === 0 && !isSlow) continue;
+                if (pass === 1 && isSlow) continue;
+                const w0 = (o.width || 0) * MINIMAP_SCALE;
+                const h0 = (o.height || 0) * MINIMAP_SCALE;
+                if (w0 <= 0 || h0 <= 0) continue;
+                const minSiz = isBrick ? MINIMAP_WALL_SIZ : MINIMAP_MIN_SIZ;
+                const w = Math.max(w0, minSiz);
+                const h = Math.max(h0, minSiz);
+                const x = MINIMAP_CENTER + (o.x - px) * MINIMAP_SCALE - w / 2;
+                const y = MINIMAP_CENTER + (o.y - py) * MINIMAP_SCALE - h / 2;
+                if (x + w < 0 || x > MINIMAP_SIZE || y + h < 0 || y > MINIMAP_SIZE) continue;
+                if (minimapObstacleSeen.has(o)) continue;
+                minimapObstacleSeen.add(o);
+                let fill, border = null;
+                if (isSlow) { fill = MINIMAP_SLOW.fill; border = MINIMAP_SLOW.border; }
+                else if (isBlack) { fill = MINIMAP_BLACK.fill; border = MINIMAP_BLACK.border; }
+                else {
+                    const dmg = BRICK_SYSTEM.BRICK_HEALTH - (o.health != null ? o.health : BRICK_SYSTEM.BRICK_HEALTH);
+                    fill = MINIMAP_BRICK_COLORS[Math.max(0, Math.min(6, dmg))] || MINIMAP_BRICK_COLORS[0];
                 }
-                
-                if (isRegionLoaded(x, y)) {
-                    region.style.backgroundColor = 'rgba(12,192,223,0.3)';
-                }
-                
-                minimap.appendChild(region);
-                regionEls.push({ region, x, y });
+                ctx.fillStyle = fill;
+                ctx.fillRect(x, y, w, h);
             }
         }
-        
-        // Crear (o re-crear) el indicador del jugador al final (queda encima de las regiones)
-        minimapPlayerEl = document.createElement('div');
-        minimapPlayerEl.className = 'minimap-player';
-        minimap.appendChild(minimapPlayerEl);
-        
-        // Guardar caché
-        minimapRegionCache = {
-            centerX, centerY,
-            elements: regionEls
-        };
+        const enemies = gameState.enemies;
+        if (enemies) {
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i];
+                if (!e || !e.active) continue;
+                const ex = MINIMAP_CENTER + (e.x - px) * MINIMAP_SCALE;
+                const ey = MINIMAP_CENTER + (e.y - py) * MINIMAP_SCALE;
+                if (ex < -2 || ex > MINIMAP_SIZE + 2 || ey < -2 || ey > MINIMAP_SIZE + 2) continue;
+                ctx.fillStyle = MINIMAP_ENEMY_COLORS[e.type] || MINIMAP_ENEMY_COLORS.orange;
+                ctx.beginPath();
+                ctx.arc(ex, ey, e.type === 'green' ? 3 : MINIMAP_ENEMY_MIN_R, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.fillStyle = MINIMAP_PLAYER_COLOR;
+        ctx.beginPath();
+        ctx.moveTo(MINIMAP_CENTER, MINIMAP_CENTER - 4.5);
+        ctx.lineTo(MINIMAP_CENTER + 3.6, MINIMAP_CENTER + 3);
+        ctx.lineTo(MINIMAP_CENTER - 3.6, MINIMAP_CENTER + 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
     }
-    
-    // 2) Posicionar el indicador del jugador (se mueve cada frame, barato: un solo style)
-    if (!minimapPlayerEl || !minimap.contains(minimapPlayerEl)) {
-        minimapPlayerEl = document.createElement('div');
-        minimapPlayerEl.className = 'minimap-player';
-        minimap.appendChild(minimapPlayerEl);
-    }
-    const playerRelX = (gameState.playerX % REGION_WIDTH) / REGION_WIDTH;
-    const playerRelY = (gameState.playerY % REGION_HEIGHT) / REGION_HEIGHT;
-    minimapPlayerEl.style.left = `${(2 * 22 + 10) + playerRelX * 20}px`;
-    minimapPlayerEl.style.top = `${(2 * 22 + 10) + playerRelY * 20}px`;
-}
-
 function updateCurrentRegion() {
     const regionX = Math.floor(gameState.playerX / REGION_WIDTH);
     const regionY = Math.floor(gameState.playerY / REGION_HEIGHT);

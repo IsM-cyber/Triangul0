@@ -342,7 +342,7 @@ class TouchControls {
 
         this.weaponButton = document.createElement('div');
         this.weaponButton.id = 'tc-weapon-btn';
-        this.weaponButton.dataset.weaponId = 1;
+        this.weaponButton.dataset.weaponId = 0;
         this.weaponButton.style.cssText = `
             width: 100% !important;
             height: 100% !important;
@@ -922,7 +922,7 @@ class TouchControls {
         // Fire immediately for single-shot weapons
         if (state && window.WEAPON_SYSTEM && state.gameActive && !state.mergingEnemies && state.canShoot) {
             const weapon = window.WEAPON_SYSTEM.currentWeapon;
-            if (weapon && weapon.fireRate === 0) {
+            if (weapon && (weapon.fireRate === 0 || weapon.type === 'contact')) {
                 const mouseWorldX = state.mouseX + state.cameraX;
                 const mouseWorldY = state.mouseY + state.cameraY;
                 const projectiles = window.WEAPON_SYSTEM.shoot(
@@ -986,13 +986,13 @@ class TouchControls {
     onWeaponSelect(e) {
         e.preventDefault();
 
-        // Weapon IDs: 1=RIFLE, 2=SHOTGUN, 3=MACHINEGUN, 4=SNIPER, 5=BAZOOKA, 6=MINIGUN
-        const weaponNames = ['R', 'S', 'M', 'SN', 'BZ', 'MG'];
-        const weaponColors = ['#222', '#ffaa00', '#ff4444', '#00ffff', '#ff00ff', '#ff8800'];
+        // Weapon IDs: 0=CONTACT, 1=RIFLE, 2=SHOTGUN, 3=MACHINEGUN, 4=SNIPER, 5=BAZOOKA, 6=MINIGUN
+        const weaponNames = ['CT', 'R', 'S', 'M', 'SN', 'BZ', 'MG'];
+        const weaponColors = ['#00ffcc', '#222', '#ffaa00', '#ff4444', '#00ffff', '#ff00ff', '#ff8800'];
 
         if (window.WEAPON_SYSTEM) {
-            const currentId = window.WEAPON_SYSTEM.currentWeapon?.id || 1;
-            const nextId = currentId >= 6 ? 1 : currentId + 1;
+            const currentId = window.WEAPON_SYSTEM.currentWeapon?.id || 0;
+            const nextId = currentId >= 6 ? 0 : currentId + 1;
             window.WEAPON_SYSTEM.switchWeapon(nextId);
 
             // Update button state: sin letras ni colores por arma (un solo estilo fijo)

@@ -51,6 +51,7 @@ let gameState = {
         useSpatialHash: true,  // Feature flag: ON para test
             useRenderBatching: true,  // Feature flag: ON para test
             centralRegionTemplate: {
+        walls: [],
         obstacles: [],
         enemies: []
     },
