@@ -1,0 +1,23 @@
+{
+  "name": "triangul0",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsM-cyber/Triangul0.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/IsM-cyber/Triangul0/issues"
+  },
+  "homepage": "https://github.com/IsM-cyber/Triangul0#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}

@@ -1,0 +1,2609 @@
+// ========== FUNCIONES DEL JUEGO ==========
+
+function calculateDirectionalSpeed(moveAngle, lookAngle) {
+    let angleDiff = Math.abs(moveAngle - lookAngle);
+    
+    if (angleDiff > Math.PI) {
+        angleDiff = (2 * Math.PI) - angleDiff;
+    }
+    
+    let angleDeg = angleDiff * (180 / Math.PI);
+    let baseSpeed = gameState.playerSpeed;
+    let speedMultiplier;
+    
+    if (angleDeg <= 45) {
+        speedMultiplier = 1.5 - (angleDeg / 45) * 0.5;
+    } else if (angleDeg <= 135) {
+        const t = (angleDeg - 45) / 90;
+        speedMultiplier = 1.0 - t * 0.5;
+    } else {
+        const t = (angleDeg - 135) / 45;
+        speedMultiplier = 0.5 + t * 0.25;
+    }
+    
+    return baseSpeed * speedMultiplier;
+}
+
+// Match the compact 16px player silhouette instead of adding a broad
+// invisible hitbox. The swept solver still prevents tunneling.
+const PLAYER_COLLISION_RADIUS = 8;
+
+function isSolidObstacle(obstacle) {
+    return Boolean(obstacle && (obstacle.isBlack || obstacle.isDestructible));
+}
+
+function getSweptObstacles(prevX, prevY, x, y, radius) {
+    // The broad-phase must cover the whole segment. Querying only the final
+    // position lets a fast entity skip a wall between two frames.
+    const midpointX = (prevX + x) / 2;
+    const midpointY = (prevY + y) / 2;
+    const halfDistance = Math.hypot(x - prevX, y - prevY) / 2;
+    const queryRadius = halfDistance + radius + 1;
+    const nearby = obstacleGrid.getNearbyObstacles(midpointX, midpointY, queryRadius);
+    const seen = new Set();
+    const candidates = [];
+
+    for (const obstacle of nearby) {
+        if (seen.has(obstacle) || !isSolidObstacle(obstacle)) continue;
+        seen.add(obstacle);
+        candidates.push(obstacle);
+    }
+
+    return candidates;
+}
+
+function sweepEntityAgainstObstacles(prevX, prevY, x, y, radius) {
+    const collisionSystem = window.CollisionSystem;
+    if (!collisionSystem || typeof collisionSystem.sweepCircleAgainstObstacles !== 'function') {
+        return { x, y, collision: false, obstacle: null };
+    }
+
+    return collisionSystem.sweepCircleAgainstObstacles(
+        prevX,
+        prevY,
+        x,
+        y,
+        radius,
+        getSweptObstacles(prevX, prevY, x, y, radius)
+    );
+}
+
+function checkPlayerCollisionAtPosition(x, y, prevX = gameState.playerX, prevY = gameState.playerY) {
+    const result = sweepEntityAgainstObstacles(
+        prevX,
+        prevY,
+        x,
+        y,
+        PLAYER_COLLISION_RADIUS
+    );
+
+    if (!result.collision) return { collided: false };
+
+    const hitX = Number.isFinite(result.hitX) ? result.hitX : result.x;
+    const hitY = Number.isFinite(result.hitY) ? result.hitY : result.y;
+    const dx = hitX - result.x;
+    const dy = hitY - result.y;
+    const distance = Math.hypot(dx, dy);
+
+    return {
+        collided: true,
+        obstacle: result.obstacle,
+        distance,
+        dx,
+        dy,
+        safeX: result.x,
+        safeY: result.y,
+    };
+}
+
+function updateHealthBar() {
+    if (!healthBar) return;
+    const healthPercent = (gameState.playerLives / MAX_LIVES) * 100;
+    healthBar.style.width = `${healthPercent}%`;
+    healthBar.style.transform = 'scale(1.05)';
+    setTimeout(() => {
+        if (healthBar) healthBar.style.transform = 'scale(1)';
+    }, 200);
+}
+
+function updateTurboBar() {
+    if (!turboBar) return;
+    const turboPercent = (gameState.turboCurrent / gameState.turboMax) * 100;
+    turboBar.style.width = `${turboPercent}%`;
+    
+    if (turboPercent > 50) {
+        turboBar.style.background = 'linear-gradient(to right, #ffcc00, #ff9900)';
+    } else if (turboPercent > 20) {
+        turboBar.style.background = 'linear-gradient(to right, #ff9900, #ff6600)';
+    } else {
+        turboBar.style.background = 'linear-gradient(to right, #ff6600, #ff3300)';
+    }
+}
+
+function updateTurbo() {
+    const now = Date.now();
+    const deltaTime = (now - gameState.lastTurboUpdate) / 1000;
+    gameState.lastTurboUpdate = now;
+    
+    if (gameState.turboRunning) {
+        if (gameState.turboCurrent > 0) {
+            gameState.turboCurrent -= gameState.turboDepletionRate * deltaTime;
+            if (gameState.turboCurrent <= 0) {
+                gameState.turboCurrent = 0;
+                gameState.turboRunning = false;
+                gameState.turboActive = false;
+                gameState.turboMode = false;
+                player.classList.remove('turbo-active');
+            }
+        } else {
+            gameState.turboRunning = false;
+            gameState.turboActive = false;
+            gameState.turboMode = false;
+            player.classList.remove('turbo-active');
+        }
+    } else {
+        if (gameState.turboCurrent < gameState.turboMax) {
+            gameState.turboCurrent += gameState.turboRechargeRate * deltaTime;
+            if (gameState.turboCurrent > gameState.turboMax) {
+                gameState.turboCurrent = gameState.turboMax;
+            }
+        }
+    }
+    
+    updateTurboBar();
+}
+
+function formatScore(score) {
+    return score.toString().padStart(4, '0');
+}
+
+function updateScoreDisplay() {
+    if (scoreDisplay) scoreDisplay.textContent = formatScore(gameState.score);
+}
+
+function updateCamera() {
+    gameState.cameraX = gameState.playerX - REGION_WIDTH / 2;
+    gameState.cameraY = gameState.playerY - REGION_HEIGHT / 2;
+    
+    worldContainer.style.transform = `translate(${-gameState.cameraX}px, ${-gameState.cameraY}px)`;
+    updateCurrentRegion();
+    // El minimap se actualiza de forma cacheada (solo se reconstruye al cambiar de región)
+    updateMinimapCached();
+}
+
+// Caché para el minimap: las 26 celdas (25 regiones + jugador) se construyen
+// UNA SOLA VEZ y se reutilizan. Evita reconstruir el DOM del minimap cada frame
+// (que mataba `innerHTML` y recreaba ~26 nodos 60 veces/segundo = reflow continuo).
+let minimapRegionCache = null;   // { centerX, centerY, elements: [divs...] }
+let minimapPlayerEl = null;      // div del indicador del jugador (se mueve a mano)
+
+    const MINIMAP_SIZE = 120;
+    const MINIMAP_CENTER = MINIMAP_SIZE / 2;
+    const MINIMAP_SPAN = REGION_WIDTH * 3;
+    const MINIMAP_SCALE = MINIMAP_SIZE / MINIMAP_SPAN;
+    const MINIMAP_RANGE = MINIMAP_SPAN / 2;
+    const MINIMAP_THROTTLE_MS = 66;
+    const MINIMAP_ENEMY_MIN_R = 2;
+    const MINIMAP_OBSTACLE_MARGIN = 140;
+    const MINIMAP_MIN_SIZ = 1;
+    const MINIMAP_WALL_SIZ = 2;
+    const MINIMAP_SLOW = { fill: '#0f3460', border: '#0cc0df' };
+    const MINIMAP_BLACK = { fill: '#000000', border: '#333333' };
+    const MINIMAP_BRICK_COLORS = ['#888888','#888888','#999999','#aaaaaa','#cccccc','#eeeeee','#ffffff'];
+    const MINIMAP_ENEMY_COLORS = { orange: '#ff9a00', fuchsia: '#ff00ff', green: '#00ff00' };
+    const MINIMAP_PLAYER_COLOR = '#e94560';
+    let minimapCanvas = null;
+    let minimapCtx = null;
+    let minimapLastUpdate = 0;
+    const minimapObstacleSeen = new Set();
+
+    function ensureMinimapCanvas() {
+        if (minimapCanvas && minimapCanvas.isConnected) return true;
+        if (!minimap) return false;
+        minimap.innerHTML = '';
+        minimapCanvas = document.createElement('canvas');
+        const dpr = window.devicePixelRatio || 1;
+        minimapCanvas.width = MINIMAP_SIZE * dpr;
+        minimapCanvas.height = MINIMAP_SIZE * dpr;
+        minimapCanvas.style.width = MINIMAP_SIZE + 'px';
+        minimapCanvas.style.height = MINIMAP_SIZE + 'px';
+        minimapCtx = minimapCanvas.getContext('2d');
+        minimapCtx.scale(dpr, dpr);
+        minimap.appendChild(minimapCanvas);
+        return true;
+    }
+
+    function updateMinimapCached() {
+        if (!gameState.minimapVisible || !minimap) return;
+        const now = performance.now();
+        if (now - minimapLastUpdate < MINIMAP_THROTTLE_MS) return;
+        minimapLastUpdate = now;
+        if (!ensureMinimapCanvas()) return;
+        const ctx = minimapCtx;
+        const px = gameState.playerX;
+        const py = gameState.playerY;
+        ctx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+        const nearby = obstacleGrid.getNearbyObstacles(px, py, MINIMAP_RANGE + MINIMAP_OBSTACLE_MARGIN);
+        minimapObstacleSeen.clear();
+        for (let pass = 0; pass < 2; pass++) {
+            for (let i = 0; i < nearby.length; i++) {
+                const o = nearby[i];
+                const isSlow = !!o.isSlow;
+                const isBlack = !!o.isBlack;
+                const isBrick = !!o.isBrick;
+                if (!isSlow && !isBlack && !isBrick) continue;
+                if (pass === 0 && !isSlow) continue;
+                if (pass === 1 && isSlow) continue;
+                const w0 = (o.width || 0) * MINIMAP_SCALE;
+                const h0 = (o.height || 0) * MINIMAP_SCALE;
+                if (w0 <= 0 || h0 <= 0) continue;
+                const minSiz = isBrick ? MINIMAP_WALL_SIZ : MINIMAP_MIN_SIZ;
+                const w = Math.max(w0, minSiz);
+                const h = Math.max(h0, minSiz);
+                const x = MINIMAP_CENTER + (o.x - px) * MINIMAP_SCALE - w / 2;
+                const y = MINIMAP_CENTER + (o.y - py) * MINIMAP_SCALE - h / 2;
+                if (x + w < 0 || x > MINIMAP_SIZE || y + h < 0 || y > MINIMAP_SIZE) continue;
+                if (minimapObstacleSeen.has(o)) continue;
+                minimapObstacleSeen.add(o);
+                let fill, border = null;
+                if (isSlow) { fill = MINIMAP_SLOW.fill; border = MINIMAP_SLOW.border; }
+                else if (isBlack) { fill = MINIMAP_BLACK.fill; border = MINIMAP_BLACK.border; }
+                else {
+                    const dmg = BRICK_SYSTEM.BRICK_HEALTH - (o.health != null ? o.health : BRICK_SYSTEM.BRICK_HEALTH);
+                    fill = MINIMAP_BRICK_COLORS[Math.max(0, Math.min(6, dmg))] || MINIMAP_BRICK_COLORS[0];
+                }
+                ctx.fillStyle = fill;
+                ctx.fillRect(x, y, w, h);
+            }
+        }
+        const enemies = gameState.enemies;
+        if (enemies) {
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i];
+                if (!e || !e.active) continue;
+                const ex = MINIMAP_CENTER + (e.x - px) * MINIMAP_SCALE;
+                const ey = MINIMAP_CENTER + (e.y - py) * MINIMAP_SCALE;
+                if (ex < -2 || ex > MINIMAP_SIZE + 2 || ey < -2 || ey > MINIMAP_SIZE + 2) continue;
+                ctx.fillStyle = MINIMAP_ENEMY_COLORS[e.type] || MINIMAP_ENEMY_COLORS.orange;
+                ctx.beginPath();
+                ctx.arc(ex, ey, e.type === 'green' ? 3 : MINIMAP_ENEMY_MIN_R, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.fillStyle = MINIMAP_PLAYER_COLOR;
+        ctx.beginPath();
+        ctx.moveTo(MINIMAP_CENTER, MINIMAP_CENTER - 4.5);
+        ctx.lineTo(MINIMAP_CENTER + 3.6, MINIMAP_CENTER + 3);
+        ctx.lineTo(MINIMAP_CENTER - 3.6, MINIMAP_CENTER + 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+function updateCurrentRegion() {
+    const regionX = Math.floor(gameState.playerX / REGION_WIDTH);
+    const regionY = Math.floor(gameState.playerY / REGION_HEIGHT);
+    gameState.currentRegionX = regionX;
+    gameState.currentRegionY = regionY;
+}
+
+function updateMinimap() {
+    if (!gameState.minimapVisible || !minimap) return;
+    minimap.innerHTML = '';
+    
+    const centerX = gameState.currentRegionX;
+    const centerY = gameState.currentRegionY;
+    
+    for (let y = centerY - 2; y <= centerY + 2; y++) {
+        for (let x = centerX - 2; x <= centerX + 2; x++) {
+            const region = document.createElement('div');
+            region.className = 'minimap-region';
+            region.style.cssText = `
+                width:20px;
+                height:20px;
+                left:${(x - (centerX - 2)) * 22 + 10}px;
+                top:${(y - (centerY - 2)) * 22 + 10}px;
+            `;
+            
+            if (x === centerX && y === centerY) {
+                region.classList.add('active');
+            }
+            
+            if (isRegionLoaded(x, y)) {
+                region.style.backgroundColor = 'rgba(12,192,223,0.3)';
+            }
+            
+            minimap.appendChild(region);
+        }
+    }
+    
+    const playerIndicator = document.createElement('div');
+    playerIndicator.className = 'minimap-player';
+    
+    const playerRelX = (gameState.playerX % REGION_WIDTH) / REGION_WIDTH;
+    const playerRelY = (gameState.playerY % REGION_HEIGHT) / REGION_HEIGHT;
+    
+    playerIndicator.style.left = `${(2 * 22 + 10) + playerRelX * 20}px`;
+    playerIndicator.style.top = `${(2 * 22 + 10) + playerRelY * 20}px`;
+    minimap.appendChild(playerIndicator);
+}
+
+function createCollisionEffect(x, y) {
+    const effect = document.createElement('div');
+    effect.className = 'collision-effect';
+    effect.style.cssText = `left:${x - 15}px;top:${y - 15}px`;
+    worldContainer.appendChild(effect);
+    setTimeout(() => effect.remove(), 300);
+}
+
+function createOrangeStain(x, y, size = 'medium') {
+    if (gameState.stains.length >= 1500) {
+        cleanupExcessStains();
+    }
+    
+    const stain = document.createElement('div');
+    stain.className = 'organic-stain';
+    
+    if (size === 'small') {
+        stain.classList.add('small-stain');
+    } else if (size === 'large') {
+        stain.classList.add('large-stain');
+    } else {
+        stain.classList.add('medium-stain');
+    }
+    
+    const orangeColors = ['#ff9900', '#ff6600', '#ff3300', '#ff9933', '#ffcc00', '#ff9966', '#ff6633'];
+    stain.style.backgroundColor = orangeColors[Math.floor(Math.random() * orangeColors.length)];
+    
+    const offsetX = (Math.random() - 0.5) * 10;
+    const offsetY = (Math.random() - 0.5) * 10;
+    stain.style.left = `${x + offsetX}px`;
+    stain.style.top = `${y + offsetY}px`;
+    stain.classList.add('stain-fade-out');
+    
+    worldContainer.appendChild(stain);
+    
+    const stainObj = {
+        element: stain,
+        createdAt: Date.now(),
+        type: 'orange',
+        x: x + offsetX,
+        y: y + offsetY
+    };
+    
+    gameState.stains.push(stainObj);
+    return stainObj;
+}
+
+function cleanupExcessStains() {
+    const orangeStains = gameState.stains.filter(stain => stain.type === 'orange');
+    
+    if (orangeStains.length > 800) {
+        orangeStains.sort((a, b) => a.createdAt - b.createdAt);
+        
+        const toRemove = orangeStains.slice(0, 200);
+        toRemove.forEach(stain => {
+            const index = gameState.stains.findIndex(s => s === stain);
+            if (index !== -1) {
+                if (stain.element && worldContainer.contains(stain.element)) {
+                    stain.element.remove();
+                }
+                gameState.stains.splice(index, 1);
+            }
+        });
+    }
+}
+
+function createOrganicOrangeExplosion(x, y, radius = 10) {
+    const shockwave = document.createElement('div');
+    shockwave.className = 'organic-shockwave';
+    shockwave.style.cssText = `left:${x}px;top:${y}px;width:${radius * 4}px;height:${radius * 4}px`;
+    worldContainer.appendChild(shockwave);
+    
+    const fragmentCount = Math.floor(Math.random() * 5) + 8;
+    for (let i = 0; i < fragmentCount; i++) {
+        const fragment = document.createElement('div');
+        fragment.className = 'organic-fragment';
+        const size = Math.random() * 3 + 3;
+        fragment.style.cssText = `left:${x}px;top:${y}px;width:${size}px;height:${size}px`;
+        
+        const orangeColors = ['#ff9900', '#ff6600', '#ff3300', '#ff9933', '#ffcc00', '#ff9966', '#ff6633'];
+        fragment.style.backgroundColor = orangeColors[Math.floor(Math.random() * orangeColors.length)];
+        
+        const fragmentShapes = ['fragment-triangle', 'fragment-irregular1', 'fragment-irregular2', 'fragment-irregular3', 'fragment-blob1', 'fragment-blob2', 'fragment-blob3', 'fragment-spike'];
+        fragment.classList.add(fragmentShapes[Math.floor(Math.random() * fragmentShapes.length)]);
+        
+        const angle = Math.random() * Math.PI * 2;
+        const speedVariation = Math.random() * 0.7 + 0.3;
+        const distance = Math.random() * 30 + 20;
+        const tx = Math.cos(angle) * distance * speedVariation;
+        const ty = Math.sin(angle) * distance * speedVariation;
+        const rotation = Math.random() * 720 - 360;
+        
+        fragment.style.setProperty('--frag-tx', `${tx}px`);
+        fragment.style.setProperty('--frag-ty', `${ty}px`);
+        fragment.style.setProperty('--frag-rotate', `${rotation}deg`);
+        
+        worldContainer.appendChild(fragment);
+        
+        setTimeout(() => {
+            createOrangeStain(x + tx, y + ty, size > 5 ? 'large' : (size > 3.5 ? 'medium' : 'small'));
+            setTimeout(() => fragment.remove(), 2000);
+        }, 600);
+    }
+    
+    createOrangeStain(x, y, 'large');
+    
+    for (let i = 0; i < 5; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = Math.random() * 15;
+        createOrangeStain(x + Math.cos(angle) * distance, y + Math.sin(angle) * distance, 'small');
+    }
+    
+    gameContainer.classList.add('orange-screen-shake');
+    setTimeout(() => gameContainer.classList.remove('orange-screen-shake'), 300);
+    
+    setTimeout(() => shockwave.remove(), 600);
+}
+
+function createGreenExplosion(x, y, radius) {
+    const explosion = document.createElement('div');
+    explosion.className = 'explosion green-explosion';
+    explosion.style.cssText = `left:${x}px;top:${y}px;width:${radius * 4}px;height:${radius * 4}px`;
+    worldContainer.appendChild(explosion);
+    
+    const shockwave = document.createElement('div');
+    shockwave.className = 'explosion-shockwave';
+    shockwave.style.cssText = `left:${x}px;top:${y}px;width:${radius * 2}px;height:${radius * 2}px`;
+    worldContainer.appendChild(shockwave);
+    
+    gameContainer.classList.add('screen-shake');
+    setTimeout(() => gameContainer.classList.remove('screen-shake'), 500);
+    
+    setTimeout(() => {
+        explosion.remove();
+        shockwave.remove();
+    }, 800);
+    
+    return explosion;
+}
+
+function cleanupOldStains() {
+    const now = Date.now();
+    const maxAge = 3000000;
+    
+    for (let i = gameState.stains.length - 1; i >= 0; i--) {
+        const stain = gameState.stains[i];
+        if (now - stain.createdAt > maxAge) {
+            if (stain.element && worldContainer.contains(stain.element)) {
+                stain.element.remove();
+            }
+            gameState.stains.splice(i, 1);
+        }
+    }
+}
+
+function createCentralRegionTemplate() {
+    gameState.centralRegionTemplate.obstacles = [];
+    obstacleGrid.clear();
+    
+    const slowObstacleCount = Math.floor(Math.random() * 5) + 3;
+    
+    for (let i = 0; i < slowObstacleCount; i++) {
+        const width = (Math.random() * 15 + 10) * 3;
+        const height = (Math.random() * 15 + 10) * 3;
+        
+        let relX, relY;
+        let attempts = 0;
+        const maxAttempts = 20;
+        
+        do {
+            relX = Math.random() * 0.7 + 0.15;
+            relY = Math.random() * 0.7 + 0.15;
+            attempts++;
+            
+            const distanceToCenter = Math.sqrt(Math.pow(relX - 0.5, 2) + Math.pow(relY - 0.5, 2));
+            
+            if (distanceToCenter > 0.25) {
+                break;
+            }
+        } while (attempts < maxAttempts);
+        
+        const obstacle = {
+            isBlack: false,
+            isSlow: true,
+            width: width,
+            height: height,
+            relX: relX,
+            relY: relY
+        };
+        
+        gameState.centralRegionTemplate.obstacles.push(obstacle);
+        
+        const worldX = 0 * REGION_WIDTH + relX * REGION_WIDTH;
+        const worldY = 0 * REGION_HEIGHT + relY * REGION_HEIGHT;
+        const gridObstacle = {
+            x: worldX,
+            y: worldY,
+            width: width,
+            height: height,
+            left: worldX - width / 2,
+            right: worldX + width / 2,
+            top: worldY - height / 2,
+            bottom: worldY + height / 2,
+            isBlack: false,
+            isSlow: true
+        };
+        obstacleGrid.addObstacle(gridObstacle);
+    }
+    
+    const brickWallCount = Math.floor(Math.random() * 6) + 10;
+    
+    for (let i = 0; i < brickWallCount; i++) {
+        const isPrincipal = Math.random() > 0.5;
+        const orientation = Math.random() > 0.5 ? 'horizontal' : 'vertical';
+        
+        let relX, relY;
+        let attempts = 0;
+        const maxAttempts = 15;
+        
+        do {
+            relX = Math.random() * 0.7 + 0.15;
+            relY = Math.random() * 0.7 + 0.15;
+            attempts++;
+            
+            const distanceToCenter = Math.sqrt(Math.pow(relX - 0.5, 2) + Math.pow(relY - 0.5, 2));
+            
+            if (distanceToCenter > 0.2) {
+                break;
+            }
+        } while (attempts < maxAttempts);
+        
+        const wallDef = {
+            isDestructible: true,
+            isBrickWall: true,
+            wallType: isPrincipal ? 'principal' : 'menor',
+            orientation: orientation,
+            length: isPrincipal ? 
+                Math.random() * (BRICK_SYSTEM.PRINCIPAL_MAX_LENGTH - BRICK_SYSTEM.PRINCIPAL_MIN_LENGTH) + BRICK_SYSTEM.PRINCIPAL_MIN_LENGTH :
+                Math.random() * (BRICK_SYSTEM.MENOR_MAX_LENGTH - BRICK_SYSTEM.MENOR_MIN_LENGTH) + BRICK_SYSTEM.MENOR_MIN_LENGTH,
+            relX: relX,
+            relY: relY
+        };
+        
+        gameState.centralRegionTemplate.obstacles.push(wallDef);
+        
+        const worldX = 0 * REGION_WIDTH + wallDef.relX * REGION_WIDTH;
+        const worldY = 0 * REGION_HEIGHT + wallDef.relY * REGION_HEIGHT;
+        
+        const tempObstacle = {
+            x: worldX,
+            y: worldY,
+            width: wallDef.length,
+            height: isPrincipal ? BRICK_SYSTEM.PRINCIPAL_THICKNESS : BRICK_SYSTEM.MENOR_THICKNESS,
+            left: worldX - wallDef.length / 2,
+            right: worldX + wallDef.length / 2,
+            top: worldY - (isPrincipal ? BRICK_SYSTEM.PRINCIPAL_THICKNESS : BRICK_SYSTEM.MENOR_THICKNESS) / 2,
+            bottom: worldY + (isPrincipal ? BRICK_SYSTEM.PRINCIPAL_THICKNESS : BRICK_SYSTEM.MENOR_THICKNESS) / 2,
+            isBrickWall: true
+        };
+        
+        if (orientation === 'vertical') {
+            tempObstacle.width = isPrincipal ? BRICK_SYSTEM.PRINCIPAL_THICKNESS : BRICK_SYSTEM.MENOR_THICKNESS;
+            tempObstacle.height = wallDef.length;
+            tempObstacle.left = worldX - (isPrincipal ? BRICK_SYSTEM.PRINCIPAL_THICKNESS : BRICK_SYSTEM.MENOR_THICKNESS) / 2;
+            tempObstacle.right = worldX + (isPrincipal ? BRICK_SYSTEM.PRINCIPAL_THICKNESS : BRICK_SYSTEM.MENOR_THICKNESS) / 2;
+            tempObstacle.top = worldY - wallDef.length / 2;
+            tempObstacle.bottom = worldY + wallDef.length / 2;
+        }
+        
+        obstacleGrid.addObstacle(tempObstacle);
+    }
+    
+    const blackObstacleCount = Math.floor(Math.random() * 5) + 7;
+    let placedCount = 0;
+    let attempts = 0;
+    const maxAttempts = 150;
+    
+    while (placedCount < blackObstacleCount && attempts < maxAttempts) {
+        attempts++;
+        
+        const width = (Math.random() * 15 + 10) * 3;
+        const height = (Math.random() * 15 + 10) * 3;
+        
+        let relX, relY;
+        let localAttempts = 0;
+        const localMaxAttempts = 10;
+        
+        do {
+            relX = Math.random() * 0.7 + 0.15;
+            relY = Math.random() * 0.7 + 0.15;
+            localAttempts++;
+            
+            const distanceToCenter = Math.sqrt(Math.pow(relX - 0.5, 2) + Math.pow(relY - 0.5, 2));
+            
+            if (distanceToCenter > 0.3) {
+                break;
+            }
+        } while (localAttempts < localMaxAttempts);
+        
+        const worldX = 0 * REGION_WIDTH + relX * REGION_WIDTH;
+        const worldY = 0 * REGION_HEIGHT + relY * REGION_HEIGHT;
+        
+        const tempObstacle = {
+            x: worldX,
+            y: worldY,
+            width: width,
+            height: height,
+            left: worldX - width / 2,
+            right: worldX + width / 2,
+            top: worldY - height / 2,
+            bottom: worldY + height / 2,
+            isBlack: true
+        };
+        
+        let hasCollision = false;
+        const startCellX = Math.floor(tempObstacle.left / obstacleGrid.cellSize);
+        const endCellX = Math.floor(tempObstacle.right / obstacleGrid.cellSize);
+        const startCellY = Math.floor(tempObstacle.top / obstacleGrid.cellSize);
+        const endCellY = Math.floor(tempObstacle.bottom / obstacleGrid.cellSize);
+        
+        for (let cellX = startCellX; cellX <= endCellX; cellX++) {
+            for (let cellY = startCellY; cellY <= endCellY; cellY++) {
+                const key = `${cellX},${cellY}`;
+                const obstaclesInCell = obstacleGrid.grid.get(key);
+                if (obstaclesInCell) {
+                    for (const existingObstacle of obstaclesInCell) {
+                        if (tempObstacle.left < existingObstacle.right + MIN_OBSTACLE_DISTANCE && 
+                            tempObstacle.right > existingObstacle.left - MIN_OBSTACLE_DISTANCE && 
+                            tempObstacle.top < existingObstacle.bottom + MIN_OBSTACLE_DISTANCE && 
+                            tempObstacle.bottom > existingObstacle.top - MIN_OBSTACLE_DISTANCE) {
+                            hasCollision = true;
+                            break;
+                        }
+                    }
+                }
+                if (hasCollision) break;
+            }
+            if (hasCollision) break;
+        }
+        
+        if (hasCollision) {
+            continue;
+        }
+        
+        const obstacle = {
+            isBlack: true,
+            isDestructible: false,
+            width: width,
+            height: height,
+            relX: relX,
+            relY: relY
+        };
+        
+        gameState.centralRegionTemplate.obstacles.push(obstacle);
+        placedCount++;
+        obstacleGrid.addObstacle(tempObstacle);
+    }
+}
+
+function createScaledObstacleFromTemplate(template, regionX, regionY, scaleFactor) {
+    // Con canvas render activo, black/slow son estáticos (nunca cambian de estado visual)
+    // y el canvas los dibuja directo. NO creamos su div en el DOM: esto elimina de verdad
+    // esos nodos (memoria) y evita que acompañen al world-container al mover la cámara.
+    const useCanvas = USE_CANVAS_RENDER && window.CANVAS_RENDER;
+    
+    const scaledWidth = template.width * scaleFactor;
+    const scaledHeight = template.height * scaleFactor;
+    
+    const worldX = regionX * REGION_WIDTH + template.relX * REGION_WIDTH;
+    const worldY = regionY * REGION_HEIGHT + template.relY * REGION_HEIGHT;
+    
+    const left = worldX - scaledWidth / 2;
+    const top = worldY - scaledHeight / 2;
+    
+    let obstacle = null;
+    if (!useCanvas) {
+        obstacle = document.createElement('div');
+        obstacle.className = 'obstacle';
+        
+        if (template.isBlack) {
+            obstacle.classList.add('black');
+        } else if (template.isSlow) {
+            obstacle.classList.add('slow');
+        }
+        
+        obstacle.style.cssText = `width:${scaledWidth}px;height:${scaledHeight}px;left:${left}px;top:${top}px`;
+        
+        if (template.isBlack) {
+            obstacle.style.zIndex = '7';
+        } else if (template.isSlow) {
+            obstacle.style.zIndex = '3';
+        }
+        
+        worldContainer.appendChild(obstacle);
+    }
+    
+    const obstacleObj = {
+        element: obstacle,  // null con canvas activo
+        x: worldX,
+        y: worldY,
+        width: scaledWidth,
+        height: scaledHeight,
+        isBlack: template.isBlack || false,
+        isDestructible: false,
+        isSlow: template.isSlow || false,
+        left: left,
+        top: top,
+        right: left + scaledWidth,
+        bottom: top + scaledHeight,
+        overlapCount: 0,
+        regionX: regionX,
+        regionY: regionY
+    };
+    
+    gameState.obstacles.push(obstacleObj);
+    
+    // Indexar en el spatial hash para que las colisiones espaciales lo detecten
+    if (useCanvas) {
+        // Con canvas, el objeto no tiene element; el canvas lo dibuja por datos
+    }
+    obstacleGrid.addObstacle(obstacleObj);
+    
+    return obstacleObj;
+}
+
+function createEnemy(type = 'orange', x = null, y = null) {
+    // Con canvas render el enemigo vivo NO crea div (el canvas lo dibuja por datos).
+    // El cadaver DOM crea su propio div al morir (directedCorpseSystem.transformEnemyVisual).
+    const useCanvasNow = (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER);
+    const enemy = useCanvasNow ? null : document.createElement('div');
+    if (enemy) enemy.className = 'enemy';
+    
+    let radius, hitsRequired;
+    switch(type) {
+        case 'orange':
+            radius = 10;
+            hitsRequired = 1;
+            break;
+        case 'fuchsia':
+            if (enemy) enemy.classList.add('special');
+            radius = 20;
+            hitsRequired = 25;
+            break;
+        case 'green':
+            if (enemy) enemy.classList.add('green');
+            radius = 80;
+            hitsRequired = 100;
+            break;
+    }
+    
+    let enemyX, enemyY;
+    
+    if (x !== null && y !== null) {
+        enemyX = x;
+        enemyY = y;
+    } else {
+            const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
+            let enemyX, enemyY;
+            let attempts = 0;
+            const maxAttempts = 50;
+            // Ensure enemy doesn't spawn on top of player
+            do {
+                enemyX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 40) + 20;
+                enemyY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 40) + 20;
+                attempts++;
+                const distanceToPlayer = Math.sqrt((enemyX - gameState.playerX)**2 + (enemyY - gameState.playerY)**2);
+                if (distanceToPlayer >= 150 || attempts >= maxAttempts) break;
+            } while (true);
+        }
+    
+    if (enemy) {
+        enemy.style.cssText = `left:${enemyX - radius}px;top:${enemyY - radius}px`;
+        worldContainer.appendChild(enemy);
+    }
+    
+    let baseSpeed;
+    switch(type) {
+        case 'orange':
+            baseSpeed = 2.5 * 1.25;
+            break;
+        case 'fuchsia':
+            baseSpeed = 1.5 * 1.25;
+            break;
+        case 'green':
+            baseSpeed = 0.4 * 1.25;
+            break;
+    }
+    
+    const enemyId = `enemy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const enemyObj = {
+        id: enemyId,
+        element: enemy,
+        x: enemyX,
+        y: enemyY,
+        radius: radius,
+        type: type,
+        speedX: (Math.random() - 0.5) * baseSpeed,
+        speedY: (Math.random() - 0.5) * baseSpeed,
+        merging: false,
+        hitsTaken: 0,
+        hitsRequired: hitsRequired,
+        prevX: enemyX,
+        prevY: enemyY,
+        slowZonesCount: 0,
+        active: false,
+        regionX: Math.floor(enemyX / REGION_WIDTH),
+        regionY: Math.floor(enemyY / REGION_HEIGHT),
+        tentacleWavePhase: 0,
+        tentacleSlowApplied: false
+    };
+    
+    gameState.enemies.push(enemyObj);
+    gameState.currentEnemyCount++;
+    
+    if (type === 'green') {
+        TENTACLE_SYSTEM.createTentaclesForGreenEnemy(enemyObj);
+        enemyObj.tentacleWavePhase = Math.random() * Math.PI * 2;
+        TENTACLE_SYSTEM.updateTentacles(enemyObj, 0);
+    }
+    
+    return enemyObj;
+}
+
+function shouldCreateGreenEnemy() {
+    let fuchsiaCount = gameState.enemies.filter(e => e.type === 'fuchsia').length;
+    return fuchsiaCount >= 3 && gameState.greenEnemiesCount === 0;
+}
+
+function createGreenEnemy() {
+    gameState.greenEnemiesCount++;
+    
+    const notification = document.createElement('div');
+    notification.className = 'green-event-notification';
+    notification.textContent = '¡BESTIA VERDE INMINENTE!';
+    notification.style.opacity = '1';
+    worldContainer.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.left = `${gameState.playerX}px`;
+        notification.style.top = `${gameState.playerY}px`;
+    }, 0);
+    
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 1000);
+    }, 3000);
+    
+    let greenEnemy = null;
+    let attempts = 0;
+    const maxAttempts = 200;
+    
+    while (!greenEnemy && attempts < maxAttempts) {
+        const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
+        let posX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 160) + 80;
+        let posY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 160) + 80;
+        
+        const distanceToPlayer = Math.sqrt((posX - gameState.playerX)**2 + (posY - gameState.playerY)**2);
+        if (distanceToPlayer < 200) {
+            attempts++;
+            continue;
+        }
+        
+        let positionValid = true;
+        const radius = 80;
+        for (let obstacle of gameState.obstacles) {
+            if (obstacle.isBlack || obstacle.isDestructible) {
+                if (posX + radius >= obstacle.left && posX - radius <= obstacle.right && 
+                    posY + radius >= obstacle.top && posY - radius <= obstacle.bottom) {
+                    positionValid = false;
+                    break;
+                }
+            }
+        }
+        
+        if (positionValid) {
+            greenEnemy = createEnemy('green', posX, posY);
+            
+            const explosionRadius = radius * 1.5;
+            const affectedObstacles = [];
+            
+            for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+                const obstacle = gameState.obstacles[i];
+                if (!obstacle.isDestructible) continue;
+                
+                const dx = obstacle.x - posX;
+                const dy = obstacle.y - posY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < explosionRadius + Math.max(obstacle.width, obstacle.height) / 2) {
+                    affectedObstacles.push({
+                        obstacle: obstacle,
+                        index: i
+                    });
+                }
+            }
+            
+            if (affectedObstacles.length > 0) {
+                createGreenExplosion(posX, posY, radius);
+                
+                for (const affected of affectedObstacles) {
+                    BRICK_SYSTEM.destroyBrick(affected.obstacle, affected.index);
+                }
+                
+                gameState.score += affectedObstacles.length * 50;
+                updateScoreDisplay();
+            }
+        }
+        attempts++;
+    }
+    
+    if (!greenEnemy) {
+        const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
+        let posX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 160) + 80;
+        let posY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 160) + 80;
+        greenEnemy = createEnemy('green', posX, posY);
+    }
+}
+
+const SPECIAL_EVENT_WAVE_MAX_RADIUS = 150;
+const SPECIAL_EVENT_WAVE_DURATION_MS = 360;
+// Dano del frente: el doble exacto de la onda de la bazooka (areaDamage 11
+// -> 22). Se deriva del dato de la bazooka y no de un numero suelto para que la
+// relacion no se desincronice si alguien reequilibra la bazooka. La onda del
+// evento atraviesa paredes y barre 150px, asi que tiene que pegar mas fuerte
+// que una sola explosion de 60px de radio.
+const SPECIAL_EVENT_WAVE_DAMAGE = WEAPON_SYSTEM.BAZOOKA.areaDamage * 2;
+let specialEventWaveActive = false;
+let specialEventWavePending = false;
+// Token de propiedad de la onda: cada frente incrementa el contador, asi un
+// paso de una onda vieja que llega tarde solo puede limpiar SUS banderas. Si
+// una onda nueva ya arranco en la partida reiniciada, esas banderas son suyas.
+let specialEventWaveToken = 0;
+
+// Distancia desde el centro del frente hasta el rectangulo del obstaculo. Se usa
+// la caja real y no center + halfSize (como hace la bazooka) para que un muro
+// largo que asoma dentro del frente cuente como alcanzado.
+function getObstacleReachDistance(x, y, obstacle) {
+    const collisionSystem = window.CollisionSystem;
+    let bounds = null;
+    if (collisionSystem && typeof collisionSystem.getObstacleBounds === 'function') {
+        bounds = collisionSystem.getObstacleBounds(obstacle);
+    }
+    if (!bounds) {
+        const halfWidth = (obstacle.width || 8) / 2;
+        const halfHeight = (obstacle.height || 8) / 2;
+        bounds = {
+            left: obstacle.x - halfWidth,
+            right: obstacle.x + halfWidth,
+            top: obstacle.y - halfHeight,
+            bottom: obstacle.y + halfHeight,
+        };
+    }
+
+    const nearestX = Math.max(bounds.left, Math.min(x, bounds.right));
+    const nearestY = Math.max(bounds.top, Math.min(y, bounds.bottom));
+    return Math.hypot(x - nearestX, y - nearestY);
+}
+
+function applySpecialEventWaveDamage(x, y) {
+    // Un reinicio (tecla R) reemplaza gameState por completo. Guardar la
+    // referencia permite detectar el cambio y abandonar los pasos viejos.
+    const waveState = gameState;
+    const waveToken = ++specialEventWaveToken;
+    specialEventWaveActive = true;
+    const hitEnemies = new Set();
+    const hitObstacles = new Set();
+    const steps = 6;
+    const stepDuration = SPECIAL_EVENT_WAVE_DURATION_MS / steps;
+
+    for (let step = 1; step <= steps; step++) {
+        setTimeout(() => {
+            // Un reinicio (tecla R) reemplaza gameState por completo: los pasos
+            // pendientes de la onda anterior no deben tocar la partida nueva.
+            if (gameState !== waveState) {
+                // La partida se reinicio: la onda vieja ya no tiene sentido y
+                // no debe tocar la partida nueva. Solo libera las banderas si
+                // todavia le pertenecen; si otra onda ya arranco en la partida
+                // nueva, esas banderas son suyas y pisarlas dejaria dos
+                // eventos concurrentes con naranjas trabadas.
+                if (waveToken === specialEventWaveToken) {
+                    specialEventWaveActive = false;
+                    specialEventWavePending = false;
+                }
+                return;
+            }
+
+            try {
+                const frontRadius = SPECIAL_EVENT_WAVE_MAX_RADIUS * (step / steps);
+
+                for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+                    const enemy = gameState.enemies[i];
+                    if (enemy.merging === true || hitEnemies.has(enemy)) continue;
+                    // Enemigos sin posicion finita son artefactos de spawn fuera
+                    // de pantalla: quedan fuera del alcance de la onda.
+                    if (!Number.isFinite(enemy.x) || !Number.isFinite(enemy.y)) continue;
+
+                    const distance = Math.hypot(enemy.x - x, enemy.y - y);
+                    if (distance <= frontRadius + enemy.radius) {
+                        hitEnemies.add(enemy);
+                        const impactAngle = Math.atan2(enemy.y - y, enemy.x - x);
+                        WEAPON_SYSTEM.createAreaDamageEffect(enemy.x, enemy.y);
+
+                        if (handleEnemyHit(enemy, SPECIAL_EVENT_WAVE_DAMAGE, impactAngle)) {
+                            gameState.enemies.splice(i, 1);
+                            gameState.currentEnemyCount--;
+                        }
+                    }
+                }
+                // La honda tambien derriba muros de ladrillo, igual que la
+                // explosion de la bazooka: el evento no queda solo en damagear enemigos.
+                // Cada muro recibe un solo golpe por onda porque el frente pasa una vez
+                // por lugar, asi que un ladrillo con vida alta aguanta la pasada.
+                for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+                    const obstacle = gameState.obstacles[i];
+                    if (!obstacle || obstacle.isDestructible !== true) continue;
+                    if (hitObstacles.has(obstacle)) continue;
+                    // Sin vida no hay nada que damagear: un destructible sin health es
+                    // un artefacto de spawn, no un ladrillo.
+                    if (!Number.isFinite(obstacle.health)) continue;
+                
+                    if (getObstacleReachDistance(x, y, obstacle) > frontRadius) continue;
+                
+                    hitObstacles.add(obstacle);
+                    obstacle.health -= SPECIAL_EVENT_WAVE_DAMAGE;
+                    const damageLevel = BRICK_SYSTEM.BRICK_HEALTH - obstacle.health;
+                    BRICK_SYSTEM.createBrickImpactEffect(obstacle.x, obstacle.y, damageLevel);
+                    BRICK_SYSTEM.applyDamageVisual(obstacle.element, damageLevel);
+                
+                    if (obstacle.health <= 0) {
+                        BRICK_SYSTEM.destroyBrick(obstacle, i);
+                    }
+                }
+            } finally {
+                // El cierre va en finally: si createAreaDamageEffect o
+                // handleEnemyHit lanzan, la bandera debe liberarse igual o el
+                // evento especial quedaria deshabilitado en toda la sesion.
+                if (step === steps) {
+                    specialEventWaveActive = false;
+                    const pending = specialEventWavePending;
+                    specialEventWavePending = false;
+                    if (pending) startSpecialEvent();
+                }
+            }
+        }, stepDuration * step);
+    }
+}
+
+function formatSpecialEventPoint(point) {
+    const x = Math.round(point.x * 10) / 10;
+    const y = Math.round(point.y * 10) / 10;
+    return `${x} ${y}`;
+}
+    
+function serializeSpecialEventPath(points) {
+    const [start, ...segments] = points;
+    return `M ${formatSpecialEventPoint(start)} ${segments
+        .map(point => `L ${formatSpecialEventPoint(point)}`)
+        .join(' ')}`;
+}
+    
+function generateSpecialEventBolts(random = Math.random) {
+    const fullTurn = Math.PI * 2;
+    const trunkCount = 6 + Math.floor(random() * 4);
+    const baseAngle = random() * fullTurn;
+    const sectorAngle = fullTurn / trunkCount;
+    const primaryPoints = [];
+    const secondaryPoints = [];
+    const trunks = [];
+
+    for (let trunkIndex = 0; trunkIndex < trunkCount; trunkIndex++) {
+        const segmentCount = 10 + Math.floor(random() * 5);
+        const trunkLength = 128 + random() * 22;
+        const segmentLength = trunkLength / segmentCount;
+        let angle = baseAngle + trunkIndex * sectorAngle
+            + (random() - 0.5) * sectorAngle * 0.35;
+        const points = [{ x: 0, y: 0 }];
+
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+            if (segmentIndex > 0) {
+                angle += (random() - 0.5) * 0.6;
+                if (random() < 0.35) {
+                    angle += (random() < 0.5 ? -1 : 1) *
+                        (0.5 + random() * 0.5);
+                }
+            }
+
+            const previous = points[points.length - 1];
+            const stepLength = segmentLength * (0.7 + random() * 0.6);
+            points.push({
+                x: previous.x + Math.cos(angle) * stepLength,
+                y: previous.y + Math.sin(angle) * stepLength
+            });
+        }
+
+        primaryPoints.push(points);
+        trunks.push(points);
+    }
+
+    trunks.forEach(trunk => {
+        const latestOriginIndex = Math.max(
+            4,
+            Math.floor((trunk.length - 1) * 0.55)
+        );
+        const firstOriginIndex = 3 + Math.floor(
+            random() * Math.max(1, latestOriginIndex - 3)
+        );
+        const originIndexes = [...new Set([firstOriginIndex, latestOriginIndex])];
+
+        originIndexes.forEach(originIndex => {
+            const origin = trunk[originIndex];
+            const previous = trunk[Math.max(0, originIndex - 1)];
+            const next = trunk[Math.min(trunk.length - 1, originIndex + 1)];
+            const trunkDirection = Math.atan2(
+                next.y - previous.y,
+                next.x - previous.x
+            );
+            const side = random() < 0.5 ? -1 : 1;
+            const divergence = 0.5 + random() * 0.8;
+            const branchSegmentCount = 2 + Math.floor(random() * 4);
+            const branchPoints = [origin];
+            let branchAngle = trunkDirection + side * divergence;
+
+            for (let segmentIndex = 0; segmentIndex < branchSegmentCount; segmentIndex++) {
+                if (segmentIndex > 0) {
+                    branchAngle += (random() - 0.5) * 0.55;
+                }
+
+                const branchPoint = branchPoints[branchPoints.length - 1];
+                const stepLength = 7 + random() * 5;
+                branchPoints.push({
+                    x: branchPoint.x + Math.cos(branchAngle) * stepLength,
+                    y: branchPoint.y + Math.sin(branchAngle) * stepLength
+                });
+            }
+
+            secondaryPoints.push(branchPoints);
+
+            // Segundo nivel: la rama vuelve a bifurcarse para que el conjunto
+            // lea como arbol ramificado y no como una estrella de radios.
+            if (random() < 0.65) {
+                const subOriginIndex = 1 + Math.floor(
+                    random() * Math.max(1, branchPoints.length - 2)
+                );
+                const subOrigin = branchPoints[subOriginIndex];
+                const subPrevious = branchPoints[Math.max(0, subOriginIndex - 1)];
+                const subNext = branchPoints[Math.min(branchPoints.length - 1, subOriginIndex + 1)];
+                const branchDirection = Math.atan2(
+                    subNext.y - subPrevious.y,
+                    subNext.x - subPrevious.x
+                );
+                const subSide = random() < 0.5 ? -1 : 1;
+                let subAngle = branchDirection + subSide * (0.45 + random() * 0.675);
+                const subSegmentCount = 1 + Math.floor(random() * 3);
+                const subPoints = [subOrigin];
+
+                for (let subIndex = 0; subIndex < subSegmentCount; subIndex++) {
+                    if (subIndex > 0) {
+                        subAngle += (random() - 0.5) * 0.55;
+                    }
+
+                    const subPreviousPoint = subPoints[subPoints.length - 1];
+                    const subStepLength = 5 + random() * 4;
+                    subPoints.push({
+                        x: subPreviousPoint.x + Math.cos(subAngle) * subStepLength,
+                        y: subPreviousPoint.y + Math.sin(subAngle) * subStepLength
+                    });
+                }
+
+                secondaryPoints.push(subPoints);
+            }
+        });
+    });
+
+    const allPoints = [...primaryPoints, ...secondaryPoints];
+    const maxAbs = allPoints.reduce((max, points) => {
+        for (const point of points) {
+            max = Math.max(max, Math.abs(point.x), Math.abs(point.y));
+        }
+        return max;
+    }, 0);
+    const coordinateLimit = 150;
+
+    if (maxAbs > coordinateLimit) {
+        const scale = coordinateLimit / maxAbs;
+        const scaledPoints = new Set();
+        for (const points of allPoints) {
+            for (const point of points) {
+                if (scaledPoints.has(point)) continue;
+                scaledPoints.add(point);
+                point.x *= scale;
+                point.y *= scale;
+            }
+        }
+    }
+
+    return {
+        primary: primaryPoints.map(serializeSpecialEventPath),
+        secondary: secondaryPoints.map(serializeSpecialEventPath),
+    };
+}
+
+function createSpecialEventExplosion(x, y) {
+    const lightning = document.createElement('div');
+    lightning.className = 'special-event-lightning';
+    lightning.setAttribute('aria-hidden', 'true');
+    lightning.style.left = `${x}px`;
+    lightning.style.top = `${y}px`;
+
+    const generatedBolts = generateSpecialEventBolts(Math.random);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '-160 -160 320 320');
+    svg.setAttribute('class', 'special-event-lightning-svg');
+    svg.setAttribute('focusable', 'false');
+    svg.innerHTML = `
+        <circle class="special-event-lightning-halo" cx="0" cy="0" r="72"></circle>
+        <circle class="special-event-lightning-ring" cx="0" cy="0" r="48"></circle>
+        <circle class="special-event-lightning-core" cx="0" cy="0" r="22"></circle>
+        <g class="special-event-bolts" transform="scale(0.42)">
+        </g>
+    `;
+
+    const boltGroup = svg.querySelector('.special-event-bolts');
+    for (const pathData of generatedBolts.primary) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'special-event-bolt');
+        path.setAttribute('d', pathData);
+        boltGroup.appendChild(path);
+    }
+
+    for (const pathData of generatedBolts.secondary) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'special-event-bolt secondary');
+        path.setAttribute('d', pathData);
+        boltGroup.appendChild(path);
+    }
+
+    lightning.appendChild(svg);
+    worldContainer.appendChild(lightning);
+    gameContainer.classList.add('screen-shake');
+
+    setTimeout(() => {
+        lightning.remove();
+        // Dos descargas pueden solaparse (por ejemplo, dos pulsaciones de T).
+        // Cada timer quita su nodo, pero la clase de screen-shake solo se
+        // retira cuando ya no queda ninguna descarga viva.
+        if (!worldContainer.querySelector('.special-event-lightning')) {
+            gameContainer.classList.remove('screen-shake');
+        }
+    }, 950);
+
+    applySpecialEventWaveDamage(x, y);
+}
+
+function startSpecialEvent() {
+    // Un evento ya activo no debe iniciar otra cadena de merge: los
+    // proyectiles que ya estaban en vuelo pueden seguir durante la
+    // animación y volverían a activar este bloque.
+    if (gameState.isSpecialEvent || gameState.mergingEnemies) return;
+    // La onda de un evento que acaba de terminar no puede encadenar otro evento
+    // en medio, pero el hito de 25 impactos tampoco puede perderse: queda
+    // pendiente y se dispara en cuanto termina la onda.
+    if (specialEventWaveActive) {
+        specialEventWavePending = true;
+        return;
+    }
+
+    gameState.isSpecialEvent = true;
+    gameState.mergingEnemies = true;
+    gameState.fuchsiaEnemiesCount++;
+    
+    gameState.enemies.forEach(enemy => {
+        if (enemy.type === 'orange' && enemy.active) {
+            if (enemy.element) enemy.element.classList.add('merging');
+            enemy.merging = true;
+        }
+    });
+    
+    setTimeout(mergeEnemiesToCenter, 500);
+}
+
+function mergeEnemiesToCenter() {
+    // Un reinicio o un evento cancelado puede dejar un callback viejo en
+    // la cola. No debe resucitar la animación después de finalizada.
+    if (!gameState.mergingEnemies) return;
+
+    const mergeSpeed = 3;
+    const enemiesToRemove = [];
+    const activeEnemies = getActiveEnemies();
+
+    for (const enemy of activeEnemies) {
+        if (enemy.type !== 'orange' || !enemy.merging) continue;
+
+        const dx = gameState.playerX - enemy.x;
+        const dy = gameState.playerY - enemy.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > 30) {
+            enemy.x += (dx / distance) * mergeSpeed;
+            enemy.y += (dy / distance) * mergeSpeed;
+            if (enemy.element) {
+                enemy.element.style.left = `${enemy.x - enemy.radius}px`;
+                enemy.element.style.top = `${enemy.y - enemy.radius}px`;
+            }
+        } else {
+            // Marcarlo antes de quitarlo evita que una referencia vieja
+            // vuelva a considerarlo parte de la fusión.
+            enemy.merging = false;
+            enemiesToRemove.push(enemy);
+        }
+    }
+
+    for (const enemy of enemiesToRemove) {
+        const index = gameState.enemies.indexOf(enemy);
+        if (index === -1) continue;
+
+        const removedEnemy = gameState.enemies[index];
+        if (removedEnemy.element) removedEnemy.element.remove();
+        gameState.enemies.splice(index, 1);
+        gameState.currentEnemyCount = Math.max(0, gameState.currentEnemyCount - 1);
+    }
+
+    // Consultar el estado actual, no el snapshot activeEnemies: los
+    // enemigos eliminados ya no deben mantener viva la animación para
+    // siempre. Este era el origen del bloqueo del evento especial.
+    const stillMerging = gameState.enemies.some(
+        enemy => enemy.type === 'orange' && enemy.merging
+    );
+
+    if (!stillMerging) {
+        finishSpecialEvent();
+    } else {
+        requestAnimationFrame(mergeEnemiesToCenter);
+    }
+}
+
+function finishSpecialEvent() {
+    gameState.isSpecialEvent = false;
+    gameState.mergingEnemies = false;
+    
+    let existingFuchsiaCount = gameState.enemies.filter(e => e.type === 'fuchsia').length;
+    let fuchsiaToCreate = gameState.fuchsiaEnemiesCount - existingFuchsiaCount;
+    
+    for (let i = 0; i < fuchsiaToCreate; i++) {
+        let fuchsiaEnemy = null;
+        let attempts = 0;
+        
+        while (!fuchsiaEnemy && attempts < 80) {
+            const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
+            let posX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 40) + 20;
+            let posY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 40) + 20;
+            const radius = 20;
+            
+            let positionValid = true;
+            for (let obstacle of gameState.obstacles) {
+                if (obstacle.isBlack || obstacle.isDestructible) {
+                    if (posX + radius >= obstacle.left && posX - radius <= obstacle.right && 
+                        posY + radius >= obstacle.top && posY - radius <= obstacle.bottom) {
+                        positionValid = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (positionValid) {
+                fuchsiaEnemy = createEnemy('fuchsia', posX, posY);
+            }
+            attempts++;
+        }
+        
+        if (!fuchsiaEnemy) {
+            const region = getRegionFromWorldCoords(gameState.playerX, gameState.playerY);
+            let posX = region.x * REGION_WIDTH + Math.random() * (REGION_WIDTH - 40) + 20;
+            let posY = region.y * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 40) + 20;
+            fuchsiaEnemy = createEnemy('fuchsia', posX, posY);
+        }
+    }
+    
+    gameState.orangeEnemiesToCreate = 2;
+    for (let i = 0; i < gameState.orangeEnemiesToCreate; i++) {
+        createEnemy('orange');
+    }
+    
+    if (shouldCreateGreenEnemy()) {
+        createGreenEnemy();
+    }
+
+    // El relámpago marca la culminación de la fusión, no su inicio.
+    createSpecialEventExplosion(gameState.playerX, gameState.playerY);
+}
+
+function detectBorderCollisions() {
+    // En mundo infinito, no hay bordes del mundo
+}
+
+function detectEnemyCollisions() {
+    const activeEnemies = getActiveEnemies();
+    
+    activeEnemies.forEach(enemy => {
+        enemy.prevX = enemy.x;
+        enemy.prevY = enemy.y;
+    });
+    
+    activeEnemies.forEach(enemy => {
+        if (!gameState.mergingEnemies) {
+            let speedFactor = 1;
+            if (enemy.slowZonesCount > 0) {
+                speedFactor = Math.pow(0.5, enemy.slowZonesCount);
+            }
+            enemy.x += enemy.speedX * speedFactor;
+            enemy.y += enemy.speedY * speedFactor;
+        }
+    });
+}
+
+function detectObstacleCollisions() {
+    const activeEnemies = getActiveEnemies();
+
+    for (const enemy of activeEnemies) {
+        const prevX = Number.isFinite(enemy.prevX) ? enemy.prevX : enemy.x;
+        const prevY = Number.isFinite(enemy.prevY) ? enemy.prevY : enemy.y;
+        const radius = enemy.radius || 10;
+        const result = sweepEntityAgainstObstacles(
+            prevX,
+            prevY,
+            enemy.x,
+            enemy.y,
+            radius
+        );
+
+        if (result.collision) {
+            enemy.x = result.x;
+            enemy.y = result.y;
+        }
+    }
+}
+
+// ========== SPATIAL HASH COLLISION SYSTEM ==========
+// Sistema paralelo para colisiones O(n) usando spatial hash grid
+// Se activa con gameState.useSpatialHash = true
+// NOTA: Original detectEnemyCollisions() NO hace enemy-enemy collision,
+// solo mueve enemigos. Este sistema replica ese comportamiento exacto.
+
+function detectEnemyCollisions_Spatial() {
+    // Rebuild grid cada frame
+    SPATIAL_HASH.clear();
+    const activeEnemies = getActiveEnemies();
+    
+    // Insert all alive enemies into grid
+    for (let i = 0; i < activeEnemies.length; i++) {
+        const enemy = activeEnemies[i];
+        SPATIAL_HASH.insert(i, enemy.x, enemy.y);
+        enemy.prevX = enemy.x;
+        enemy.prevY = enemy.y;
+    }
+    
+    // Move enemies (NO enemy-enemy collision, matching original behavior)
+    for (let i = 0; i < activeEnemies.length; i++) {
+        const enemy = activeEnemies[i];
+        if (gameState.mergingEnemies) continue;
+        
+        let speedFactor = 1;
+        if (enemy.slowZonesCount > 0) {
+            speedFactor = Math.pow(0.5, enemy.slowZonesCount);
+        }
+        
+        // Just move, no collision check - matching original exactly
+        enemy.x += enemy.speedX * speedFactor;
+        enemy.y += enemy.speedY * speedFactor;
+    }
+}
+
+// Validation helper: run both systems and compare
+function validateSpatialHashRegression() {
+    if (!window.SPATIAL_HASH) return { error: 'SPATIAL_HASH not loaded' };
+    
+    const mismatches = [];
+    const testFrames = 50;
+    
+    // Save original state
+    const originalUseSpatialHash = gameState.useSpatialHash;
+    
+    for (let frame = 0; frame < testFrames; frame++) {
+        // Backup enemy positions
+        const activeEnemies = getActiveEnemies();
+        const backup = activeEnemies.map(e => ({ x: e.x, y: e.y, speedX: e.speedX, speedY: e.speedY }));
+        
+        // Run OLD system
+        gameState.useSpatialHash = false;
+        detectEnemyCollisions();
+        const oldPositions = activeEnemies.map(e => ({ x: e.x, y: e.y }));
+        
+        // Restore
+        for (let i = 0; i < activeEnemies.length; i++) {
+            activeEnemies[i].x = backup[i].x;
+            activeEnemies[i].y = backup[i].y;
+            activeEnemies[i].speedX = backup[i].speedX;
+            activeEnemies[i].speedY = backup[i].speedY;
+        }
+        
+        // Run NEW system
+        gameState.useSpatialHash = true;
+        detectEnemyCollisions_Spatial();
+        const newPositions = activeEnemies.map(e => ({ x: e.x, y: e.y }));
+        
+        // Compare
+        for (let i = 0; i < activeEnemies.length; i++) {
+            const dx = oldPositions[i].x - newPositions[i].x;
+            const dy = oldPositions[i].y - newPositions[i].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0.5) { // Tolerancia 0.5px
+                mismatches.push({ frame, enemyIndex: i, dist, old: oldPositions[i], new: newPositions[i] });
+            }
+        }
+        
+        // Step simulation forward
+        stepSimulationFrame();
+    }
+    
+    // Restore flag
+    gameState.useSpatialHash = originalUseSpatialHash;
+    
+    return { 
+        passed: mismatches.length === 0, 
+        mismatches,
+        totalFrames: testFrames
+    };
+}
+
+function stepSimulationFrame() {
+    // Minimal step to advance game state for validation
+    if (gameState.gameActive && !gameState.mergingEnemies) {
+        updateProjectiles();
+        updateEnemies(1/60);
+    }
+}
+
+function detectSlowZones() {
+    gameState.playerSlowZonesCount = 0;
+    
+    // Recolectar las slow-zones cercanas al player UNA sola vez por frame.
+    // Los enemigos están cerca del jugador, así que reutilizamos el mismo array
+    // para todos en vez de crear un getNearbyObstacles por enemigo (evita ~200 arrays/frame).
+    const nearbyObstacles = obstacleGrid.getNearbyObstacles(gameState.playerX, gameState.playerY, 400);
+    const slowZones = [];
+    for (let i = 0; i < nearbyObstacles.length; i++) {
+        const obstacle = nearbyObstacles[i];
+        if (obstacle.isSlow) {
+            slowZones.push(obstacle);
+        }
+    }
+    
+    // Jugador
+    for (let obstacle of slowZones) {
+        if (gameState.playerX >= obstacle.left && gameState.playerX <= obstacle.right && 
+            gameState.playerY >= obstacle.top && gameState.playerY <= obstacle.bottom) {
+            gameState.playerSlowZonesCount++;
+        }
+    }
+    
+    // Cap: el CSS solo define slowed (≥1) y slowed2 (≥3). Más de 3 no tiene sentido visual
+    // ni de gameplay: 0.5^3 = 12.5% velocidad mínima. Evita acumulación excesiva en zonas
+    // con muchos solapados (antes llegaba a 6 = 1.56% velocidad = "no se mueve").
+    if (gameState.playerSlowZonesCount > 3) gameState.playerSlowZonesCount = 3;
+    
+    player.classList.remove('slowed', 'slowed2');
+    if (gameState.playerSlowZonesCount >= 3) {
+        player.classList.add('slowed2');
+    } else if (gameState.playerSlowZonesCount >= 1) {
+        player.classList.add('slowed');
+    }
+    
+    const activeEnemies = getActiveEnemies();
+    
+    for (let enemy of activeEnemies) {
+        enemy.slowZonesCount = 0;
+        // Chequear contra las slow-zones ya recolectadas (sin crear arrays por enemigo)
+        for (let obstacle of slowZones) {
+            if (enemy.x >= obstacle.left && enemy.x <= obstacle.right && 
+                enemy.y >= obstacle.top && enemy.y <= obstacle.bottom) {
+                enemy.slowZonesCount++;
+            }
+        }
+        
+        if (enemy.element) {
+            enemy.element.classList.remove('slowed', 'slowed2');
+            if (enemy.slowZonesCount >= 3) {
+                enemy.element.classList.add('slowed2');
+            } else if (enemy.slowZonesCount >= 1) {
+                enemy.element.classList.add('slowed');
+            }
+        }
+    }
+}
+
+function detectAndApplyRubbleEffect() {
+    const now = Date.now();
+    
+    if (now - gameState.lastRubbleCheck < 50) {
+        return;
+    }
+    
+    gameState.lastRubbleCheck = now;
+    
+    const isOnRubble = RUBBLE_SYSTEM.checkPlayerOnRubble(gameState.playerX, gameState.playerY);
+    gameState.isOnRubble = isOnRubble;
+    
+    if (gameState.turboActive) {
+        gameState.rubbleDeviationX = 0;
+        gameState.rubbleDeviationY = 0;
+        return;
+    }
+    
+    if (isOnRubble) {
+        const deviation = RUBBLE_SYSTEM.applyUnstableEffect(gameState.playerX, gameState.playerY, gameState.playerSpeed);
+        gameState.rubbleDeviationX = deviation.x;
+        gameState.rubbleDeviationY = deviation.y;
+        gameState.rubbleEffectActive = true;
+    } else {
+        if (gameState.rubbleEffectActive) {
+            gameState.rubbleDeviationX *= 0.8;
+            gameState.rubbleDeviationY *= 0.8;
+            
+            if (Math.abs(gameState.rubbleDeviationX) < 0.01 && Math.abs(gameState.rubbleDeviationY) < 0.01) {
+                gameState.rubbleDeviationX = 0;
+                gameState.rubbleDeviationY = 0;
+                gameState.rubbleEffectActive = false;
+            }
+        }
+    }
+}
+
+function detectAndApplyCorpseEffect() {
+    const isInCorpse = DIRECTED_CORPSE_SYSTEM.checkPlayerInCorpse(gameState.playerX, gameState.playerY);
+    gameState.isInCorpse = isInCorpse;
+    
+    if (isInCorpse) {
+        if (!player.classList.contains('pestilent')) {
+            player.classList.add('pestilent');
+        }
+    } else {
+        if (player.classList.contains('pestilent') && !gameState.isOnRubble) {
+            player.classList.remove('pestilent');
+        }
+    }
+}
+
+function detectPlayerObstacleCollision(
+    prevX = gameState.playerPrevX ?? gameState.playerX,
+    prevY = gameState.playerPrevY ?? gameState.playerY
+) {
+    // Keep the actual frame origin. Overwriting this after movement makes the
+    // resolution vector zero and was the source of persistent penetration.
+    gameState.playerPrevX = prevX;
+    gameState.playerPrevY = prevY;
+
+    const result = sweepEntityAgainstObstacles(
+        prevX,
+        prevY,
+        gameState.playerX,
+        gameState.playerY,
+        PLAYER_COLLISION_RADIUS
+    );
+
+    if (!result.collision) return;
+
+    gameState.playerX = result.x;
+    gameState.playerY = result.y;
+
+    if (gameState.turboActive) {
+        createCollisionEffect(gameState.playerX, gameState.playerY);
+        gameState.turboRunning = false;
+        gameState.turboActive = false;
+        gameState.turboMode = false;
+        player.classList.remove('turbo-active');
+    }
+}
+
+// Colision por SEGMENTO (slab method): chequea el trayecto del proyectil entre
+// su posicion previa y la actual contra el rectangulo del obstaculo.
+// Antes solo se chequeaba el punto final -> el proyectil avanzaba 16-50px por
+// frame y las paredes miden 2-4px, asi que las atravesaba (tunneling).
+// Devuelve el tiempo de entrada t (0..1) o -1 si el segmento no cruza el rect.
+function segmentRectEnterTime(prevX, prevY, x, y, left, top, right, bottom) {
+    let tEnter = 0;
+    let tExit = 1;
+    const dx = x - prevX;
+    const dy = y - prevY;
+    
+    if (dx === 0) {
+        if (prevX < left || prevX > right) return -1;
+    } else {
+        let t1 = (left - prevX) / dx;
+        let t2 = (right - prevX) / dx;
+        if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+        if (t1 > tEnter) tEnter = t1;
+        if (t2 < tExit) tExit = t2;
+        if (tEnter > tExit) return -1;
+    }
+    
+    if (dy === 0) {
+        if (prevY < top || prevY > bottom) return -1;
+    } else {
+        let t1 = (top - prevY) / dy;
+        let t2 = (bottom - prevY) / dy;
+        if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+        if (t1 > tEnter) tEnter = t1;
+        if (t2 < tExit) tExit = t2;
+        if (tEnter > tExit) return -1;
+    }
+    
+    if (tExit < 0 || tEnter > 1) return -1;
+    return Math.max(0, Math.min(tEnter, 1));
+}
+
+function detectProjectileObstacleCollision(projectile, prevX, prevY) {
+    // Devuelve: -1 sin impacto | 0 impacto destructible (daño aplicado) | 1 impacto indestructible (bloquea)
+    let hitDestructible = false;
+
+    // Ladrillos destructibles (paredes): daño en el punto real de impacto
+    for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+        const obstacle = gameState.obstacles[i];
+        if (!obstacle.isBrick) continue;
+        
+        const tEnter = segmentRectEnterTime(
+            prevX, prevY, projectile.x, projectile.y,
+            obstacle.left, obstacle.top, obstacle.right, obstacle.bottom
+        );
+        if (tEnter < 0) continue;
+        
+        const hitX = prevX + (projectile.x - prevX) * tEnter;
+        const hitY = prevY + (projectile.y - prevY) * tEnter;
+        
+        obstacle.health -= projectile.damage;
+        
+        BRICK_SYSTEM.createBrickImpactEffect(hitX, hitY, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
+        BRICK_SYSTEM.applyDamageVisual(obstacle.element, BRICK_SYSTEM.BRICK_HEALTH - obstacle.health);
+        
+        if (obstacle.health <= 0) {
+            BRICK_SYSTEM.destroyBrick(obstacle, i);
+        }
+        
+        hitDestructible = true;
+        
+        if (!projectile.penetrating) {
+            // Munición normal: impacta y muere en el primer obstáculo
+            return 0;
+        }
+        // Sniper penetrante: atraviesa; pierde energia POR CADA pared atravesada.
+        // (Antes se descontaba una sola vez por frame en el caller, pero el loop
+        //  destruia TODAS las paredes del segmento -> la bala sobrevivia con mas
+        //  dano del esperado y el enemigo detras recibia dano inflado.)
+        projectile.damage -= projectile.penetrationLoss;
+    }
+    
+    // Paredes negras indestructibles: bloquean SIEMPRE (incluso al sniper)
+    for (let obstacle of gameState.obstacles) {
+        if (obstacle.isBlack && !obstacle.isDestructible) {
+            const tEnter = segmentRectEnterTime(
+                prevX, prevY, projectile.x, projectile.y,
+                obstacle.left, obstacle.top, obstacle.right, obstacle.bottom
+            );
+            if (tEnter >= 0) {
+                createCollisionEffect(projectile.x, projectile.y);
+                return 1;
+            }
+        }
+    }
+    return hitDestructible ? 0 : -1;
+}
+
+function updatePlayerPosition() {
+    if (!gameState.gameActive || gameState.mergingEnemies) return;
+
+    const movementStartX = gameState.playerX;
+    const movementStartY = gameState.playerY;
+    
+    detectSlowZones();
+    let currentSpeed = gameState.playerSpeed;
+    
+    detectAndApplyRubbleEffect();
+    detectAndApplyCorpseEffect();
+    
+    const mouseWorldX = gameState.mouseX + gameState.cameraX;
+    const mouseWorldY = gameState.mouseY + gameState.cameraY;
+    const lookAngle = Math.atan2(mouseWorldY - gameState.playerY, mouseWorldX - gameState.playerX);
+    
+    gameState.playerRotation = lookAngle * (180 / Math.PI) + 90;
+    
+    if (gameState.turboActive) {
+        currentSpeed *= 6;
+        player.classList.add('turbo-active');
+        
+        const steps = 4;
+        const stepSpeed = currentSpeed / steps;
+
+        for (let i = 0; i < steps; i++) {
+            const newX = gameState.playerX + Math.cos(gameState.turboAngle) * stepSpeed;
+            const newY = gameState.playerY + Math.sin(gameState.turboAngle) * stepSpeed;
+
+            const collisionCheck = checkPlayerCollisionAtPosition(
+                newX,
+                newY,
+                gameState.playerX,
+                gameState.playerY
+            );
+
+            if (collisionCheck.collided) {
+                gameState.playerX = collisionCheck.safeX;
+                gameState.playerY = collisionCheck.safeY;
+
+                createCollisionEffect(gameState.playerX, gameState.playerY);
+
+                gameState.turboRunning = false;
+                gameState.turboActive = false;
+                gameState.turboMode = false;
+                player.classList.remove('turbo-active');
+
+                break;
+            } else {
+                gameState.playerX = newX;
+                gameState.playerY = newY;
+            }
+        }
+        
+        gameState.playerRotation = gameState.turboAngle * (180 / Math.PI) + 90;
+        
+    } else {
+        player.classList.remove('turbo-active');
+        
+        let moveX = 0;
+        let moveY = 0;
+        
+        if (gameState.keys['w'] || gameState.keys['W']) {
+            moveY -= 1;
+        }
+        if (gameState.keys['s'] || gameState.keys['S']) {
+            moveY += 1;
+        }
+        if (gameState.keys['a'] || gameState.keys['A']) {
+            moveX -= 1;
+        }
+        if (gameState.keys['d'] || gameState.keys['D']) {
+            moveX += 1;
+        }
+        
+        if (moveX !== 0 || moveY !== 0) {
+            const moveMagnitude = Math.sqrt(moveX * moveX + moveY * moveY);
+            const normalizedMoveX = moveX / moveMagnitude;
+            const normalizedMoveY = moveY / moveMagnitude;
+            
+            const moveAngle = Math.atan2(normalizedMoveY, normalizedMoveX);
+            
+            currentSpeed = calculateDirectionalSpeed(moveAngle, lookAngle);
+            
+            if (gameState.playerSlowZonesCount > 0) {
+                currentSpeed *= Math.pow(0.5, gameState.playerSlowZonesCount);
+            }
+            
+            gameState.playerX += normalizedMoveX * currentSpeed;
+            gameState.playerY += normalizedMoveY * currentSpeed;
+            
+            if (gameState.rubbleEffectActive) {
+                gameState.playerX += gameState.rubbleDeviationX;
+                gameState.playerY += gameState.rubbleDeviationY;
+            }
+        } else {
+            if (gameState.rubbleEffectActive) {
+                gameState.playerX += gameState.rubbleDeviationX * 0.5;
+                gameState.playerY += gameState.rubbleDeviationY * 0.5;
+            }
+        }
+    }
+    
+    detectPlayerObstacleCollision(movementStartX, movementStartY);
+
+    // --- Animación y recolección de munición al pasar por encima ---
+    const ammoPickups = gameState.ammoPickups || [];
+    const ahora = Date.now();
+    for (let i = ammoPickups.length - 1; i >= 0; i--) {
+        const pickup = ammoPickups[i];
+        if (!pickup) continue;
+
+        // Animar desde origen (muerte del enemigo) hasta destino (~30px)
+        if (pickup.progress < 1) {
+            const transcurrido = ahora - (pickup.animStartTime || ahora);
+            pickup.progress = Math.min(1, transcurrido / 400);
+            pickup.x = pickup.startX + (pickup.targetX - pickup.startX) * pickup.progress;
+            pickup.y = pickup.startY + (pickup.targetY - pickup.startY) * pickup.progress;
+            if (pickup.element) {
+                pickup.element.style.left = pickup.x + 'px';
+                pickup.element.style.top = pickup.y + 'px';
+            }
+        }
+
+        // Recolección al pasar por encima del cargador (radio exacto)
+        const dx = gameState.playerX - pickup.x;
+        const dy = gameState.playerY - pickup.y;
+        if (Math.hypot(dx, dy) < 24) {
+            for (const [weaponType, amount] of Object.entries(pickup.ammo || {})) {
+                if (window.WEAPON_SYSTEM && window.WEAPON_SYSTEM.addAmmo) {
+                    window.WEAPON_SYSTEM.addAmmo(weaponType, amount);
+                }
+            }
+            if (pickup.element && pickup.element.parentNode) {
+                pickup.element.remove();
+            }
+            ammoPickups.splice(i, 1);
+        }
+    }
+
+    updateCamera();
+    
+    const playerScreenX = gameState.playerX - gameState.cameraX;
+    const playerScreenY = gameState.playerY - gameState.cameraY;
+    
+    if (gameState.useRenderBatching && window.RENDER_BATCH) {
+        RENDER_BATCH.add(() => {
+            player.style.cssText = `left:${playerScreenX}px;top:${playerScreenY}px;--player-rotation:${gameState.playerRotation}deg`;
+        });
+    } else {
+        player.style.cssText = `left:${playerScreenX}px;top:${playerScreenY}px;--player-rotation:${gameState.playerRotation}deg`;
+    }
+    
+    if (gameState.isOnRubble) {
+        if (!player.classList.contains('unstable')) {
+            player.classList.add('unstable');
+        }
+    } else {
+        player.style.transform = `translate(-50%, -50%) rotate(${gameState.playerRotation}deg)`;
+        if (player.classList.contains('unstable')) {
+            player.classList.remove('unstable');
+        }
+    }
+    
+    if (gameState.turboActive) {
+        player.style.borderBottomColor = '#ffcc00';
+        player.style.filter = 'drop-shadow(0 0 15px rgba(255,204,0,0.9))';
+    } else if (gameState.isOnRubble) {
+        player.style.borderBottomColor = '#888888';
+        player.style.filter = 'drop-shadow(0 0 8px rgba(136,136,136,0.7))';
+    } else if (gameState.isInCorpse) {
+        player.style.borderBottomColor = '#ff6b9d';
+        player.style.filter = 'drop-shadow(0 0 10px rgba(255,107,157,0.9))';
+    } else {
+        player.style.borderBottomColor = '#e94560';
+        player.style.filter = 'drop-shadow(0 0 6px rgba(233,69,96,0.8))';
+    }
+}
+
+// Daño/muerte común para cualquier fuente: proyectil directo u onda expansiva.
+// Replica exactamente el comportamiento por tipo que tenía el loop de
+// proyectiles. Devuelve true si el enemigo murió (el llamador hace el splice).
+function estaEnBloqueNegro(x, y) {
+    const cercanos = obstacleGrid.getNearbyObstacles(x, y, 24);
+    for (let i = 0; i < cercanos.length; i++) {
+        if (cercanos[i].isBlack) return true;
+    }
+    return false;
+}
+
+function buscarPosicionLibre(x, y, distanciaMin, distanciaMax, pasosAngulo) {
+    for (let dist = distanciaMin; dist <= distanciaMax; dist += 10) {
+        for (let ang = 0; ang < Math.PI * 2; ang += pasosAngulo) {
+            const tx = x + Math.cos(ang) * dist;
+            const ty = y + Math.sin(ang) * dist;
+            if (!estaEnBloqueNegro(tx, ty)) return { x: tx, y: ty };
+        }
+    }
+    return null;
+}
+
+function spawnAmmoPickup(x, y, ammo, color) {
+    if (!gameState.ammoPickups) gameState.ammoPickups = [];
+
+    const startX = x;
+    const startY = y;
+    const pickupColor = color || '#ffff00';
+
+    // Buscar posiciones hasta encontrar un lugar libre de bloques negros
+    let finalX = startX + 30;
+    let finalY = startY + 30;
+    const libre = buscarPosicionLibre(startX, startY, 20, 120, Math.PI / 12);
+    if (libre) {
+        finalX = libre.x;
+        finalY = libre.y;
+    }
+
+    const el = document.createElement('div');
+    el.className = 'ammo-pickup';
+    el.style.position = 'absolute';
+    el.style.left = startX + 'px';
+    el.style.top = startY + 'px';
+    el.style.width = '8px';
+    el.style.height = '8px';
+    el.style.borderRadius = '50%';
+    el.style.background = pickupColor;
+    el.style.boxShadow = `0 0 8px ${pickupColor}, 0 0 16px ${pickupColor}`;
+    el.style.zIndex = '10';
+    el.style.pointerEvents = 'none';
+    const world = document.getElementById('world-container');
+    if (world) world.appendChild(el);
+
+    gameState.ammoPickups.push({
+        element: el,
+        x: startX,
+        y: startY,
+        startX: startX,
+        startY: startY,
+        targetX: finalX,
+        targetY: finalY,
+        progress: 0,
+        animStartTime: Date.now(),
+        ammo: ammo
+    });
+}
+
+function handleEnemyHit(enemy, amount, impactAngle) {
+    if (enemy.type === 'orange') {
+        enemy.hitsTaken += amount;
+        gameState.hits++;
+        createOrganicOrangeExplosion(enemy.x, enemy.y, enemy.radius);
+        if (enemy.element) enemy.element.remove();
+        gameState.score += 100;
+        updateScoreDisplay();
+        gameState.orangeEnemiesToCreate++;
+        
+        let currentOrangeCount = gameState.enemies.filter(e => e.type === 'orange').length;
+        let enemiesToCreate = gameState.orangeEnemiesToCreate - currentOrangeCount;
+        for (let k = 0; k < enemiesToCreate; k++) {
+            createEnemy('orange');
+        }
+        
+        if (gameState.hits % 25 === 0 && gameState.hits > 0) {
+            startSpecialEvent();
+        }
+        
+        if (shouldCreateGreenEnemy()) {
+            createGreenEnemy();
+        }
+        spawnAmmoPickup(enemy.x, enemy.y, { rifle: WEAPON_SYSTEM.RIFLE.cooldownShots, shotgun: WEAPON_SYSTEM.SHOTGUN.cooldownShots }, '#ffff00');
+        return true;
+    }
+    
+    if (enemy.type === 'fuchsia') {
+        enemy.hitsTaken += amount;
+        gameState.hits += amount;
+        if (enemy.hitsTaken >= 25) {
+            DIRECTED_CORPSE_SYSTEM.transformEnemyToCorpse(enemy, impactAngle);
+            gameState.score += 500;
+            updateScoreDisplay();
+            gameState.specialHits++;
+            gameState.fuchsiaEnemiesCount++;
+            
+            for (let k = 0; k < 2; k++) {
+                createEnemy('fuchsia');
+            }
+            
+            if (gameState.hits % 25 === 0 && gameState.hits > 0) {
+                startSpecialEvent();
+            }
+            
+            if (shouldCreateGreenEnemy()) {
+                createGreenEnemy();
+            }
+            spawnAmmoPickup(enemy.x, enemy.y, { machinegun: WEAPON_SYSTEM.MACHINEGUN.cooldownShots, sniper: WEAPON_SYSTEM.SNIPER.cooldownShots }, '#ff00ff');
+            return true;
+        }
+        return false;
+    }
+    
+    if (enemy.type === 'green') {
+        enemy.hitsTaken += amount;
+        gameState.hits += amount;
+        if (enemy.hitsTaken >= 100) {
+            TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
+            DIRECTED_CORPSE_SYSTEM.transformEnemyToCorpse(enemy, impactAngle);
+            gameState.score += 2000;
+            updateScoreDisplay();
+            gameState.greenHits++;
+            gameState.greenEnemiesCount--;
+            gameState.fuchsiaEnemiesCount++;
+            
+            for (let k = 0; k < 2; k++) {
+                createEnemy('fuchsia');
+            }
+            
+            if (shouldCreateGreenEnemy()) {
+                createGreenEnemy();
+            }
+            
+            if (gameState.hits % 25 === 0 && gameState.hits > 0) {
+                startSpecialEvent();
+            }
+            spawnAmmoPickup(enemy.x, enemy.y, { bazooka: WEAPON_SYSTEM.BAZOOKA.cooldownShots, minigun: WEAPON_SYSTEM.MINIGUN.cooldownShots }, '#00ff00');
+            return true;
+        }
+        return false;
+    }
+    
+    // Otros tipos: solo acumulan daño (misma regla que tenía el juego antes)
+    enemy.hitsTaken += amount;
+    return false;
+}
+
+function updateProjectiles() {
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const projectile = gameState.projectiles[i];
+        
+        // Posicion previa del frame: la colision con obstaculos se chequea por
+        // SEGMENTO (previo -> actual) para que los proyectiles rapidos no
+        // atraviesen las paredes finas (16-50px/frame vs grosores de 2-4px).
+        const prevX = projectile.x;
+        const prevY = projectile.y;
+        
+        const shouldRemove = WEAPON_SYSTEM.updateProjectile(projectile);
+        
+        if (shouldRemove) {
+            if (projectile.weaponType === "bazooka") {
+                WEAPON_SYSTEM.applyBazookaAreaDamage(
+                    projectile.x, 
+                    projectile.y, 
+                    projectile.explosionRadius || 60, 
+                    projectile.areaDamage || 11
+                );
+            }
+            WEAPON_SYSTEM.removeProjectile(projectile);
+            gameState.projectiles.splice(i, 1);
+            continue;
+        }
+        
+        const obstacleHit = detectProjectileObstacleCollision(projectile, prevX, prevY);
+        if (obstacleHit !== -1) {
+            if (projectile.penetrating && obstacleHit === 0) {
+                // Sniper: la bala atraviesa el obstaculo.
+                // La perdida de energia ya se aplico POR CADA pared dentro de
+                // detectProjectileObstacleCollision; aqui solo verificamos si
+                // agoto su dano en el paso y la retiramos.
+                if (projectile.damage <= 0) {
+                    WEAPON_SYSTEM.removeProjectile(projectile);
+                    gameState.projectiles.splice(i, 1);
+                    continue;
+                }
+            } else {
+                // Impacto bloqueante (pared negra) o municion normal
+                if (projectile.weaponType === "bazooka") {
+                    WEAPON_SYSTEM.applyBazookaAreaDamage(
+                        projectile.x, 
+                        projectile.y, 
+                        projectile.explosionRadius || 60, 
+                        projectile.areaDamage || 11
+                    );
+                }
+                WEAPON_SYSTEM.removeProjectile(projectile);
+                gameState.projectiles.splice(i, 1);
+                continue;
+            }
+        }
+        
+        if (projectile.weaponType === "bazooka" && projectile.distanceTraveled >= projectile.maxDistance) {
+            WEAPON_SYSTEM.applyBazookaAreaDamage(projectile.x, projectile.y, projectile.explosionRadius, projectile.areaDamage);
+            WEAPON_SYSTEM.removeProjectile(projectile);
+            gameState.projectiles.splice(i, 1);
+            continue;
+        }
+        
+        for (let j = gameState.enemies.length - 1; j >= 0; j--) {
+            const enemy = gameState.enemies[j];
+            // La bala penetrante no vuelve a golpear al mismo enemigo
+            if (projectile.hitEnemies && projectile.hitEnemies.has(enemy)) continue;
+            const dx = projectile.x - enemy.x;
+            const dy = projectile.y - enemy.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const collisionDistance = (projectile.weaponType === "shotgun" ? 1.5 : 0.5) + enemy.radius;
+            
+            let impactado = false;
+            if (projectile.penetrating) {
+                // Balas penetrantes: detección swept (segmento-círculo). El sniper
+                // avanza 50px/frame y el chequeo punto-final le hace saltarse
+                // enemigos pequeños entre frames (tunneling de enemigos)
+                const segDx = projectile.x - prevX;
+                const segDy = projectile.y - prevY;
+                const len2 = segDx * segDx + segDy * segDy;
+                let pr = len2 > 0 ? ((enemy.x - prevX) * segDx + (enemy.y - prevY) * segDy) / len2 : 0;
+                pr = Math.max(0, Math.min(1, pr));
+                const closerX = prevX + segDx * pr;
+                const closerY = prevY + segDy * pr;
+                const dx = enemy.x - closerX;
+                const dy = enemy.y - closerY;
+                impactado = dx * dx + dy * dy < collisionDistance * collisionDistance;
+            } else {
+                const dx = projectile.x - enemy.x;
+                const dy = projectile.y - enemy.y;
+                impactado = Math.sqrt(dx * dx + dy * dy) < collisionDistance;
+            }
+            
+            if (impactado) {
+                const impactAngle = Math.atan2(projectile.speedY, projectile.speedX);
+                const enemyDied = handleEnemyHit(enemy, projectile.damage, impactAngle);
+                if (enemyDied) {
+                    gameState.enemies.splice(j, 1);
+                    gameState.currentEnemyCount--;
+                }
+                if (projectile.penetrating) {
+                    // Sniper: sigue atravesando; pierde energia con cada enemigo
+                    projectile.hitEnemies.add(enemy);
+                    projectile.damage -= projectile.penetrationLoss;
+                    if (projectile.damage <= 0) {
+                        WEAPON_SYSTEM.removeProjectile(projectile);
+                        gameState.projectiles.splice(i, 1);
+                        break;
+                    }
+                } else {
+                    WEAPON_SYSTEM.removeProjectile(projectile);
+                    gameState.projectiles.splice(i, 1);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+function updateEnemyAI(enemy, deltaTime) {
+    // Si está en estado de merge (naranjas unidas), no aplicar IA: deja que el
+    // sistema de merging siga moviéndola hacia el jugador.
+    if (enemy.merging) return;
+
+    const px = gameState.playerX;
+    const py = gameState.playerY;
+    const dx = px - enemy.x;
+    const dy = py - enemy.y;
+    const distance = Math.hypot(dx, dy);
+
+    switch (enemy.type) {
+        case 'orange':
+            // Evasiva: huye del jugador cuando está cerca, vaga lentamente si no.
+            if (distance < 250 && distance > 0) {
+                const fleeX = enemy.x - px;
+                const fleeY = enemy.y - py;
+                const fleeDist = Math.hypot(fleeX, fleeY) || 1;
+                enemy.speedX = (fleeX / fleeDist) * 6.0;
+                enemy.speedY = (fleeY / fleeDist) * 6.0;
+            } else {
+                enemy.speedX *= 0.95;
+                enemy.speedY *= 0.95;
+                if (Math.random() < 0.03) {
+                    enemy.speedX += (Math.random() - 0.5) * 3;
+                    enemy.speedY += (Math.random() - 0.5) * 3;
+                }
+                const cap = 2.0;
+                const cur = Math.hypot(enemy.speedX, enemy.speedY);
+                if (cur > cap) {
+                    enemy.speedX = (enemy.speedX / cur) * cap;
+                    enemy.speedY = (enemy.speedY / cur) * cap;
+                }
+            }
+            break;
+
+        case 'fuchsia':
+            // Patrullaje caótico: cambios bruscos de dirección, velocidad variable y giros erráticos.
+            if (!enemy.aiPatrolX || !enemy.aiPatrolY) {
+                enemy.aiPatrolX = enemy.x + (Math.random() - 0.5) * 300;
+                enemy.aiPatrolY = enemy.y + (Math.random() - 0.5) * 300;
+                enemy.aiPatrolTimer = 0;
+                enemy.aiPatrolSpeed = 1.0 + Math.random() * 2.5;
+            }
+            enemy.aiPatrolTimer += deltaTime * 60;
+
+            // Cada ~60-120 frames elige un nuevo punto aleatorio cercano (caótico)
+            const cambioCada = 60 + Math.random() * 60;
+            if (enemy.aiPatrolTimer >= cambioCada) {
+                enemy.aiPatrolX = enemy.x + (Math.random() - 0.5) * 300;
+                enemy.aiPatrolY = enemy.y + (Math.random() - 0.5) * 300;
+                enemy.aiPatrolTimer = 0;
+                enemy.aiPatrolSpeed = 0.5 + Math.random() * 3.0;
+            }
+
+            const pdx = enemy.aiPatrolX - enemy.x;
+            const pdy = enemy.aiPatrolY - enemy.y;
+            const pdist = Math.hypot(pdx, pdy);
+
+            // Ruido aleatorio constante para hacer el movimiento tembloroso
+            const ruido = (Math.random() - 0.5) * 1.5;
+
+            if (pdist < 20) {
+                enemy.aiPatrolX = enemy.x + (Math.random() - 0.5) * 300;
+                enemy.aiPatrolY = enemy.y + (Math.random() - 0.5) * 300;
+                enemy.aiPatrolTimer = 0;
+            } else {
+                enemy.speedX = (pdx / pdist) * enemy.aiPatrolSpeed + ruido;
+                enemy.speedY = (pdy / pdist) * enemy.aiPatrolSpeed + ruido;
+            }
+            break;
+
+        case 'green':
+            // Agresiva: persecución acentuada hacia el jugador.
+            // Velocidad alta y sin frenado: siempre apunta directo al jugador.
+            if (distance > 0) {
+                enemy.speedX = (dx / distance) * 5.0;
+                enemy.speedY = (dy / distance) * 5.0;
+                // Sin desaceleración: mantiene la dirección de persecución.
+                enemy.speedX *= 1.0;
+                enemy.speedY *= 1.0;
+            }
+            break;
+    }
+}
+
+function updateEnemies(deltaTime) {
+    if (gameState.mergingEnemies) return;
+    
+    const activeEnemies = getActiveEnemies();
+    
+    // Actualizar IA de cada enemigo antes de mover
+    for (let i = 0; i < activeEnemies.length; i++) {
+        updateEnemyAI(activeEnemies[i], deltaTime);
+    }
+    
+    // Spatial Hash collision system (feature flag): SOLO colisiones enemigo-enemigo.
+    // Las colisiones proyectil-enemigo se resuelven en updateProjectiles (loop manual,
+    // unica fuente de verdad: swept para penetrantes, hitEnemies, perdida de energia por
+    // enemigo y bazooka con area). El duplicado updateProjectileCollisions_Spatial fue
+    // eliminado: llamaba a damageEnemy() (no definida -> ReferenceError en runtime) y
+    // usaba radio mas permisivo (radius+8 vs 0.5+radius) -> doble dano potencial y rompia
+    // la penetracion del sniper (quita la bala al primer golpe).
+    if (gameState.useSpatialHash) {
+        detectEnemyCollisions_Spatial();
+    } else {
+        detectEnemyCollisions();
+    }
+    
+    detectObstacleCollisions();
+    detectBorderCollisions();
+    
+    for (let i = 0; i < activeEnemies.length; i++) {
+        const enemy = activeEnemies[i];
+        
+        if (enemy.element && !enemy.element.classList.contains('dead-fuxia') && !enemy.element.classList.contains('dead-green')) {
+            // Con canvas render: NO escribir al DOM (el canvas lo dibuja)
+            if (!(USE_CANVAS_RENDER && window.CANVAS_RENDER)) {
+                if (gameState.useRenderBatching && window.RENDER_BATCH) {
+                    RENDER_BATCH.add(() => {
+                        if (enemy.element) enemy.element.style.cssText = `left:${enemy.x - enemy.radius}px;top:${enemy.y - enemy.radius}px`;
+                    });
+                } else {
+                    enemy.element.style.cssText = `left:${enemy.x - enemy.radius}px;top:${enemy.y - enemy.radius}px`;
+                }
+            }
+        }
+        
+        if (enemy.type === 'green' && enemy.active) {
+            TENTACLE_SYSTEM.updateTentacles(enemy, deltaTime);
+        }
+        
+        const dx = gameState.playerX - enemy.x;
+        const dy = gameState.playerY - enemy.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const collisionDistance = 12 + enemy.radius;
+        
+        if (distance < collisionDistance) {
+            if (enemy.type === 'green') {
+                TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
+                gameState.playerLives = 0;
+            } else {
+                gameState.playerLives--;
+            }
+            updateHealthBar();
+            
+            player.style.opacity = '0.5';
+            setTimeout(() => {
+                if (gameState.gameActive) player.style.opacity = '1';
+            }, 200);
+            
+            if (!enemy.deadClass) {
+                if (enemy.type === 'green') {
+                    TENTACLE_SYSTEM.removeAllTentaclesForEnemy(enemy.id);
+                }
+                
+                if (enemy.element) enemy.element.remove();
+                const globalIndex = gameState.enemies.indexOf(enemy);
+                if (globalIndex !== -1) {
+                    gameState.enemies.splice(globalIndex, 1);
+                }
+                gameState.currentEnemyCount--;
+                
+                if (enemy.type === 'green') {
+                    gameState.greenEnemiesCount--;
+                }
+                
+                if (enemy.type === 'fuchsia') {
+                    createEnemy('fuchsia');
+                } else if (enemy.type === 'orange') {
+                    let currentOrangeCount = gameState.enemies.filter(e => e.type === 'orange').length;
+                    if (currentOrangeCount < gameState.orangeEnemiesToCreate * 3) {
+                        createEnemy('orange');
+                    }
+                } else if (enemy.type === 'green') {
+                    if (gameState.playerLives > 0 && shouldCreateGreenEnemy()) {
+                        createGreenEnemy();
+                    }
+                }
+            }
+            
+            if (gameState.playerLives <= 0) {
+                endGame();
+            }
+            break;
+        }
+    }
+}
+
+function shoot() {
+    if (!gameState.gameActive || gameState.mergingEnemies || !gameState.canShoot) return;
+    
+    const weapon = WEAPON_SYSTEM.getCurrentWeapon();
+    const mouseWorldX = gameState.mouseX + gameState.cameraX;
+    const mouseWorldY = gameState.mouseY + gameState.cameraY;
+    
+    const projectiles = WEAPON_SYSTEM.shoot(
+        gameState.playerX, gameState.playerY, 
+        mouseWorldX, mouseWorldY
+    );
+    
+    gameState.projectiles.push(...projectiles);
+    
+    if (COOLDOWN_SYSTEM.incrementShots(weapon.type)) {
+        // El enfriamiento se activó automáticamente
+    }
+    
+    if (weapon.type === 'minigun') {
+        WEAPON_SYSTEM.updateAmmoDisplay();
+    }
+}
+
+function endGame() {
+    gameState.gameActive = false;
+    if (finalScoreElement) finalScoreElement.textContent = `Puntuación: ${formatScore(gameState.score)}`;
+    if (document.getElementById('hits-final')) document.getElementById('hits-final').textContent = `Impactos: ${gameState.hits}`;
+    if (document.getElementById('walls-destroyed')) document.getElementById('walls-destroyed').textContent = `Ladrillos destruidos: ${gameState.wallsDestroyed}`;
+    if (document.getElementById('special-count')) document.getElementById('special-count').textContent = `Círculos fucsia eliminados: ${gameState.specialHits}`;
+    if (document.getElementById('green-count')) document.getElementById('green-count').textContent = `Círculos verdes eliminados: ${gameState.greenHits}`;
+    if (document.getElementById('pestilence-damage')) document.getElementById('pestilence-damage').textContent = `Daño por pestilencia recibido: ${gameState.pestilenceDamageReceived || 0}`;
+    if (document.getElementById('splash-damage')) document.getElementById('splash-damage').textContent = `Daño por salpicadura recibido: ${DIRECTED_CORPSE_SYSTEM.splashDamageTotal || 0}`;
+    if (document.getElementById('tentacle-damage')) document.getElementById('tentacle-damage').textContent = `Daño por tentáculos recibido: ${TENTACLE_SYSTEM.tentacleDamageTotal || 0}`;
+    if (document.getElementById('tentacles-destroyed')) document.getElementById('tentacles-destroyed').textContent = `Tentáculos destruidos: ${TENTACLE_SYSTEM.tentaclesDestroyed || 0}`;
+    if (document.getElementById('rifle-shots')) document.getElementById('rifle-shots').textContent = `Disparos de rifle: ${WEAPON_SYSTEM.rifleShots}`;
+    if (document.getElementById('shotgun-shots')) document.getElementById('shotgun-shots').textContent = `Disparos de escopeta: ${WEAPON_SYSTEM.shotgunShots}`;
+    if (document.getElementById('machinegun-shots')) document.getElementById('machinegun-shots').textContent = `Disparos de ametralladora: ${WEAPON_SYSTEM.machinegunShots}`;
+    if (document.getElementById('minigun-shots')) document.getElementById('minigun-shots').textContent = `Disparos de minigun: ${WEAPON_SYSTEM.minigunShots}`;
+    if (document.getElementById('max-level')) document.getElementById('max-level').textContent = `Nivel máximo alcanzado: ${gameState.maxLevelReached}`;
+    
+    if (gameOverMessage) {
+        if (gameState.score < 1000) {
+            gameOverMessage.textContent = "¡Sigue practicando!";
+        } else if (gameState.score < 3000) {
+            gameOverMessage.textContent = "¡Buen trabajo!";
+        } else if (gameState.score < 6000) {
+            gameOverMessage.textContent = "¡Excelente!";
+        } else if (gameState.score < 10000) {
+            gameOverMessage.textContent = "¡Increíble! ¡Eres un experto!";
+        } else {
+            gameOverMessage.textContent = "¡Leyenda! ¡Nivel maestro alcanzado!";
+        }
+    }
+    
+    if (gameOverScreen) gameOverScreen.style.display = 'block';
+}
+
+function toggleMinimap() {
+    gameState.minimapVisible = !gameState.minimapVisible;
+    if (minimap) minimap.style.display = gameState.minimapVisible ? 'block' : 'none';
+    if (gameState.minimapVisible) {
+        // Forzar reconstrucción al volver a mostrarlo (por si cambió de región mientras estaba oculto)
+        minimapRegionCache = null;
+        updateMinimapCached();
+    }
+}
+
+function updateWorldColorBasedOnLevel() {
+    let uniqueRegionsExplored = gameState.exploredRegions.size;
+    let newLevel = Math.max(0, uniqueRegionsExplored - 1);
+    newLevel = Math.min(newLevel, COLOR_SYSTEM.MAX_LEVEL);
+    
+    if (newLevel !== gameState.currentLevel) {
+        gameState.previousLevel = gameState.currentLevel;
+        gameState.currentLevel = newLevel;
+        
+        if (newLevel > gameState.maxLevelReached) {
+            gameState.maxLevelReached = newLevel;
+        }
+        
+        COLOR_SYSTEM.updateVisualProgress(newLevel);
+        
+        if (newLevel > gameState.previousLevel) {
+            const targetColor = COLOR_SYSTEM.getColorForLevel(newLevel);
+            COLOR_SYSTEM.applyColorTransition(targetColor);
+            updateGameContainerColor(targetColor);
+            updateExistingRegionBackgrounds();
+        }
+    }
+}
+
+function updateGameContainerColor(targetColor) {
+    if (!gameContainer) return;
+    const colorString = COLOR_SYSTEM.rgbToString(targetColor);
+    gameContainer.style.backgroundColor = colorString;
+    gameContainer.style.boxShadow = `0 0 40px rgba(${targetColor.r}, ${targetColor.g}, ${targetColor.b}, 0.3)`;
+}
+
+function updateExistingRegionBackgrounds() {
+    const currentLevel = gameState.currentLevel;
+    const targetColor = COLOR_SYSTEM.getColorForLevel(currentLevel);
+    const colorString = COLOR_SYSTEM.rgbToString(targetColor);
+    
+    gameState.regionBackgrounds.forEach(bg => {
+        if (bg.element && worldContainer.contains(bg.element)) {
+            bg.element.style.backgroundColor = colorString;
+        }
+    });
+}
+
+function findSafeStartPosition() {
+    const regionX = Math.floor(900 / REGION_WIDTH);
+    const regionY = Math.floor(900 / REGION_HEIGHT);
+    
+    let attempts = 0;
+    const maxAttempts = 100;
+    
+    while (attempts < maxAttempts) {
+        const worldX = regionX * REGION_WIDTH + Math.random() * (REGION_WIDTH - 100) + 50;
+        const worldY = regionY * REGION_HEIGHT + Math.random() * (REGION_HEIGHT - 100) + 50;
+        
+        const playerRadius = 12;
+        let positionValid = true;
+        
+        for (let obstacle of gameState.obstacles) {
+            if (obstacle.isBlack) {
+                if (worldX + playerRadius >= obstacle.left && 
+                    worldX - playerRadius <= obstacle.right && 
+                    worldY + playerRadius >= obstacle.top && 
+                    worldY - playerRadius <= obstacle.bottom) {
+                    positionValid = false;
+                    break;
+                }
+            }
+        }
+        
+        for (let obstacle of gameState.obstacles) {
+            if (obstacle.isBrick) {
+                if (worldX + playerRadius >= obstacle.left && 
+                    worldX - playerRadius <= obstacle.right && 
+                    worldY + playerRadius >= obstacle.top && 
+                    worldY - playerRadius <= obstacle.bottom) {
+                    positionValid = false;
+                    break;
+                }
+            }
+        }
+        
+        for (let enemy of gameState.enemies) {
+            const dx = worldX - enemy.x;
+            const dy = worldY - enemy.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance < playerRadius + enemy.radius + 50) {
+                positionValid = false;
+                break;
+            }
+        }
+        
+        if (positionValid) {
+            return { x: worldX, y: worldY };
+        }
+        
+        attempts++;
+    }
+    
+    return { x: 900, y: 900 };
+}
