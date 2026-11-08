@@ -125,6 +125,10 @@ const BRICK_SYSTEM = {
     },
     
     createBrickImpactEffect(x, y, damageLevel) {
+            // SONIDO: Impacto
+            if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+                SOUND_SYSTEM.play('brick_hit', 0.4, 0.9 + Math.random() * 0.2);
+            }
             // Con canvas render: los efectos efímeros se dibujan como partículas (sin divs)
             if (typeof USE_CANVAS_RENDER !== 'undefined' && USE_CANVAS_RENDER && window.CANVAS_RENDER) {
                 // Spark (corto, brillante)
@@ -187,6 +191,10 @@ const BRICK_SYSTEM = {
         },
     
     destroyBrick(brick, index) {
+            // SONIDO: Destrucción
+            if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+                SOUND_SYSTEM.play('brick_destroy', 0.5, 0.9 + Math.random() * 0.2);
+            }
             // Con canvas render, los bricks no tienen element DOM; no retornar, seguir para crear escombros
             // if (!brick.element) return;
 

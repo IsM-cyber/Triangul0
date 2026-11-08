@@ -157,6 +157,9 @@
         WEAPON_SYSTEM.resetStats();
         COOLDOWN_SYSTEM.init();
         RUBBLE_SYSTEM.reset();
+
+        // SONIDO: Detener turbo al reiniciar
+        if (window.SOUND_SYSTEM) SOUND_SYSTEM.stop('turbo_on');
         DIRECTED_CORPSE_SYSTEM.clearAllCorpses();
         TENTACLE_SYSTEM.clearAllTentacles();
         
@@ -297,6 +300,12 @@
                 gameState.turboRunning = true;
                 gameState.turboActive = true;
                 gameState.turboMode = true;
+                
+                // SONIDO: Turbo
+                if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+                    window.currentTurboSound = SOUND_SYSTEM.play('turbo_on', 0.5, 1.0, true, true); // Loop=true, forceStop=true
+                }
+
                 
                 const mouseWorldX = gameState.mouseX + gameState.cameraX;
                 const mouseWorldY = gameState.mouseY + gameState.cameraY;
@@ -451,6 +460,32 @@
             const minimap = document.getElementById('minimap');
             if (topHud) topHud.style.display = 'flex';
             if (minimap) minimap.style.display = 'block';
+
+            // SONIDO: Inicializar y cargar sonidos
+            SOUND_SYSTEM.init();
+            
+            // Diccionario de sonidos a cargar
+            const soundsToLoad = {
+                'shot_rifle': 'sounds/rifle.mp3',
+                'shot_shotgun': 'sounds/shotgun.mp3',
+                'shot_machinegun': 'sounds/machinegun.mp3',
+                'shot_sniper': 'sounds/sniper.mp3',
+                'shot_bazooka': 'sounds/bazooka.mp3',
+                'shot_minigun': 'sounds/minigun.mp3',
+                'shot_contact': 'sounds/bolt.mp3', // Usamos 'bolt.mp3' en lugar de 'contact.mp3'
+                'brick_hit': 'sounds/brick_hit.mp3',
+                'brick_destroy': 'sounds/brick_destroy.mp3',
+                'tentacle_hit': 'sounds/tentacle_hit.mp3',
+                'tentacle_explosion': 'sounds/tentacle_explosion.mp3',
+                'player_damage': 'sounds/player_damage.mp3',
+                'turbo_on': 'sounds/turbo.mp3',
+                'game_over': 'sounds/game_over.mp3'
+            };
+            
+            Object.entries(soundsToLoad).forEach(([name, url]) => {
+                SOUND_SYSTEM.load(name, url);
+            });
+            
             setTimeout(() => {
                 startScreen.style.display = 'none';
                 gameWrapper.style.display = 'flex';

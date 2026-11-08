@@ -1043,6 +1043,13 @@ class TouchControls {
             state.turboActive = true;
             state.turboMode = true;
 
+            // SONIDO: Turbo
+            // window.SOUND_SYSTEM = {
+            //     init: () => {}, load: () => {}, play: () => {}, stop: () => {}, activeSounds: {}
+            // };
+            // Restauración temporal: Sound system desactivado para verificar gameplay
+
+
             const mouseWorldX = state.mouseX + state.cameraX;
             const mouseWorldY = state.mouseY + state.cameraY;
             const dx = mouseWorldX - state.playerX;

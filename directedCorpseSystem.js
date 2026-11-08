@@ -566,6 +566,11 @@ const DIRECTED_CORPSE_SYSTEM = {
         if (now - this.lastDamageTime >= this.DAMAGE_INTERVAL) {
             const damage = corpse.isGreen ? 3 : 2;
             gameState.playerLives -= damage;
+            
+            // SONIDO: Daño
+            if (window.SOUND_SYSTEM) {
+                SOUND_SYSTEM.play('player_damage', 0.5, 0.9 + Math.random() * 0.2);
+            }
             gameState.pestilenceDamageReceived = (gameState.pestilenceDamageReceived || 0) + damage;
             
             updateHealthBar();

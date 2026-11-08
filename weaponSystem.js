@@ -173,12 +173,9 @@
         },
 
         switchWeapon(weaponId) {
-            if (this.currentWeapon.type === 'machinegun' && this.machinegunInterval) {
-                this.stopMachinegun();
-            }
-            if (this.currentWeapon.type === 'minigun' && this.minigunInterval) {
-                this.stopMinigun();
-            }
+            // Limpiar siempre cualquier estado o temporizador pendiente de armas automáticas
+            this.stopMachinegun();
+            this.stopMinigun();
     
             // IDs: 0=CONTACT, 1=RIFLE, 2=SHOTGUN, 3=MACHINEGUN, 4=SNIPER, 5=BAZOOKA, 6=MINIGUN
             if (weaponId === 0) this.currentWeapon = this.CONTACT;
@@ -265,7 +262,22 @@
         startMachinegun() {
             if (this.currentWeapon.type !== 'machinegun') return;
             if (this.machinegunInterval) return;
+            
+            // Verificar munición antes de arrancar
+            const ammo = window.gameState?.ammoCount?.machinegun ?? 0;
+            if (ammo <= 0) return;
+
+            // SONIDO: Iniciar bucle de ametralladora
+            if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+                SOUND_SYSTEM.play('shot_machinegun', 0.5, 1.0, true, true);
+            }
+            
+            // Disparo inicial garantizado
+            this.shootMachinegun();
+            this.lastMachinegunShot = Date.now();
+            
             this.machinegunInterval = setInterval(() => {
+                // Solo verificar isMouseDown para disparos subsecuentes (después del inicial)
                 if (!this.isMouseDown || !gameState.gameActive || gameState.mergingEnemies || !gameState.canShoot) {
                     this.stopMachinegun();
                     return;
@@ -279,18 +291,33 @@
                 clearInterval(this.machinegunInterval);
                 this.machinegunInterval = null;
             }
+            // Detener el sonido de la ametralladora inmediatamente
+            if (window.SOUND_SYSTEM) {
+                SOUND_SYSTEM.stop('shot_machinegun');
+            }
         },
     
         shootMachinegun() {
                 const now = Date.now();
                 if (now - this.lastMachinegunShot < this.currentWeapon.fireRate) return;
-                this.lastMachinegunShot = now;
+                
                 const projectiles = this.shoot(
                     gameState.playerX, gameState.playerY,
                     gameState.mouseX + gameState.cameraX,
                     gameState.mouseY + gameState.cameraY
                 );
+                
+                // Si no hay munición, detenemos la ametralladora
+                if (!projectiles || projectiles.length === 0) {
+                    this.stopMachinegun();
+                    return;
+                }
+                
+                this.lastMachinegunShot = now;
                 gameState.projectiles.push(...projectiles);
+                
+                // El sonido se maneja en bucle en startMachinegun/stopMachinegun
+                
                 const weapon = this.currentWeapon;
                 if (window.COOLDOWN_SYSTEM) COOLDOWN_SYSTEM.incrementShots(weapon.type);
                 const angle = Math.atan2(gameState.mouseY + gameState.cameraY - gameState.playerY,
@@ -303,6 +330,12 @@
             if (this.minigunInterval) return;
             this.minigunSpinning = true;
             this.minigunHeat = 0;
+            
+            // SONIDO: Iniciar bucle de minigun
+            if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+                SOUND_SYSTEM.play('shot_minigun', 0.5, 1.0, true, true);
+            }
+            
             setTimeout(() => {
                 if (!this.minigunSpinning) return;
                 this.minigunInterval = setInterval(() => {
@@ -323,6 +356,10 @@
                 clearInterval(this.minigunInterval);
                 this.minigunInterval = null;
             }
+            // Detener el sonido de la minigun inmediatamente
+            if (window.SOUND_SYSTEM) {
+                SOUND_SYSTEM.stop('shot_minigun');
+            }
             const coolInterval = setInterval(() => {
                 this.minigunHeat = Math.max(0, this.minigunHeat - this.MINIGUN.heatDecayRate);
                 if (this.minigunHeat <= 0) clearInterval(coolInterval);
@@ -342,6 +379,9 @@
                 const projectile = this.createProjectile(gameState.playerX, gameState.playerY, finalAngle, this.MINIGUN, 0);
                 gameState.projectiles.push(projectile);
                 window.gameState.ammoCount.minigun--;
+                
+                // El sonido se maneja en bucle en startMinigun/stopMinigun
+                
                 if (window.COOLDOWN_SYSTEM) COOLDOWN_SYSTEM.incrementShots('minigun');
                 this.updateAmmoDisplay();
                 this.createMachinegunMuzzleFlash(gameState.playerX, gameState.playerY, finalAngle);
@@ -396,6 +436,13 @@
                 window.gameState.ammoCount[weapon.type]--;
             }
             this.updateAmmoDisplay();
+
+            // SONIDO: Disparo
+            if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running' && weapon.type !== 'contact' && weapon.type !== 'machinegun' && weapon.type !== 'minigun') {
+                const pitch = 0.9 + Math.random() * 0.2;
+                SOUND_SYSTEM.play('shot_' + weapon.type, 0.5, pitch);
+            }
+
             return projectiles;
         },
     
@@ -735,6 +782,11 @@
             const now = Date.now();
             if (now - (this.lastContactShot || 0) < this.currentWeapon.cooldownDuration) return;
             this.lastContactShot = now;
+
+            // SONIDO: Contacto
+            if (window.SOUND_SYSTEM) {
+                SOUND_SYSTEM.play('shot_contact', 0.3, 1.0, false); // no loop
+            }
 
             const angle = Math.atan2(
                 gameState.mouseY + gameState.cameraY - gameState.playerY,

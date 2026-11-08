@@ -134,12 +134,14 @@ function updateTurbo() {
                 gameState.turboActive = false;
                 gameState.turboMode = false;
                 player.classList.remove('turbo-active');
+                if (window.SOUND_SYSTEM) {
+                    console.log("Stopping turbo_on due to exhaustion");
+                    SOUND_SYSTEM.stop('turbo_on');
+                    if (window.currentTurboSound) { try { window.currentTurboSound.source.stop(); } catch (e) {} window.currentTurboSound = null; }
+                }
             }
         } else {
-            gameState.turboRunning = false;
-            gameState.turboActive = false;
-            gameState.turboMode = false;
-            player.classList.remove('turbo-active');
+            // Already handled exhausted condition
         }
     } else {
         if (gameState.turboCurrent < gameState.turboMax) {
@@ -1704,6 +1706,10 @@ function detectPlayerObstacleCollision(
         gameState.turboActive = false;
         gameState.turboMode = false;
         player.classList.remove('turbo-active');
+        if (window.SOUND_SYSTEM) {
+            console.log("Stopping turbo_on due to collision");
+            SOUND_SYSTEM.stop('turbo_on');
+        }
     }
 }
 
@@ -1846,6 +1852,10 @@ function updatePlayerPosition() {
                 gameState.turboActive = false;
                 gameState.turboMode = false;
                 player.classList.remove('turbo-active');
+                if (window.SOUND_SYSTEM) {
+                    console.log("Stopping turbo_on due to collision (segment)");
+                    SOUND_SYSTEM.stop('turbo_on');
+                }
 
                 break;
             } else {
@@ -2464,6 +2474,11 @@ function shoot() {
 }
 
 function endGame() {
+    // SONIDO: Game Over
+    if (window.SOUND_SYSTEM) {
+        SOUND_SYSTEM.play('game_over', 0.6, 1.0);
+    }
+    
     gameState.gameActive = false;
     if (finalScoreElement) finalScoreElement.textContent = `Puntuación: ${formatScore(gameState.score)}`;
     if (document.getElementById('hits-final')) document.getElementById('hits-final').textContent = `Impactos: ${gameState.hits}`;

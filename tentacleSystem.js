@@ -217,6 +217,11 @@ const TENTACLE_SYSTEM = {
         const now = Date.now();
         if (now - tentacle.lastGrabDamage >= this.GRAB_DAMAGE_INTERVAL) {
             gameState.playerLives -= this.GRAB_DAMAGE;
+            
+            // SONIDO: Daño
+            if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+                SOUND_SYSTEM.play('player_damage', 0.5, 0.9 + Math.random() * 0.2);
+            }
             this.tentacleDamageTotal += this.GRAB_DAMAGE;
             
             updateHealthBar();
@@ -281,6 +286,10 @@ const TENTACLE_SYSTEM = {
     },
     
     createSegmentHitEffect(x, y, weaponType) {
+        // SONIDO: Impacto
+        if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+            SOUND_SYSTEM.play('tentacle_hit', 0.4, 0.9 + Math.random() * 0.2);
+        }
         const color = weaponType === "shotgun" ? "#ffcc00" : 
                      weaponType === "machinegun" ? "#ff3333" : 
                      weaponType === "minigun" ? "#ff00ff" : "#00ff00";
@@ -347,6 +356,10 @@ const TENTACLE_SYSTEM = {
     },
     
     createSegmentExplosion(x, y, size) {
+        // SONIDO: Explosión
+        if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
+            SOUND_SYSTEM.play('tentacle_explosion', 0.5, 0.9 + Math.random() * 0.2);
+        }
         const explosion = document.createElement('div');
         explosion.className = 'explosion green-explosion';
         explosion.style.cssText = `left:${x}px;top:${y}px;width:${size * 3}px;height:${size * 3}px`;
