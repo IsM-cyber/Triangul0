@@ -28,7 +28,10 @@ const SOUND_SYSTEM = {
 
     // Reproducir sonido: play(nombre, volumen=1, pitch=1, loop=false, forceStop=false)
     play(name, volume = 1, pitch = 1, loop = false, forceStop = false) {
-        if (!this.buffers[name]) return;
+        if (!this.buffers[name]) {
+            console.warn(`Sonido no encontrado: ${name}`);
+            return;
+        }
 
         // Solo detener si se solicita explícitamente (ej: turbo)
         if (forceStop) {

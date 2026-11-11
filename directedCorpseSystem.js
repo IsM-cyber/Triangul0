@@ -61,6 +61,11 @@ const DIRECTED_CORPSE_SYSTEM = {
         this.startDirectedParticleSystem(corpse, isGreen);
         this.startContactDamageSystem(corpse);
         
+        // SONIDO: Explosión orgánica al crear cadáver
+        if (window.SOUND_SYSTEM) {
+            SOUND_SYSTEM.play('organic_explosion', 0.7, 0.9 + Math.random() * 0.2);
+        }
+        
         this.activeCorpses.push(corpse);
         
         const duration = isGreen ? this.CORPSE_DURATION * 1.5 : this.CORPSE_DURATION;

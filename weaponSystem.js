@@ -185,6 +185,9 @@
             else if (weaponId === 4) this.currentWeapon = this.SNIPER;
             else if (weaponId === 5) this.currentWeapon = this.BAZOOKA;
             else if (weaponId === 6) this.currentWeapon = this.MINIGUN;
+            
+            // SONIDO: Cambio de arma
+            if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('click_menu', 0.4, 1.0);
     
             this.updateWeaponDisplay();
             this.updateAmmoDisplay();
@@ -265,7 +268,11 @@
             
             // Verificar munición antes de arrancar
             const ammo = window.gameState?.ammoCount?.machinegun ?? 0;
-            if (ammo <= 0) return;
+            if (ammo <= 0) {
+                // SONIDO: Arma vacía
+                if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('empty_click', 0.5, 1.0);
+                return;
+            }
 
             // SONIDO: Iniciar bucle de ametralladora
             if (window.SOUND_SYSTEM && window.SOUND_SYSTEM.context && window.SOUND_SYSTEM.context.state === 'running') {
@@ -327,7 +334,17 @@
     
         startMinigun() {
             if (this.currentWeapon.type !== 'minigun') return;
-            if (this.minigunInterval) return;
+            // Evitar múltiples ciclos de preparación si ya está girando o disparando
+            if (this.minigunInterval || this.minigunSpinning) return;
+            
+            // Verificar munición antes de arrancar
+            const ammo = window.gameState?.ammoCount?.minigun ?? 0;
+            if (ammo <= 0) {
+                // SONIDO: Arma vacía
+                if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('empty_click', 0.5, 1.0);
+                return;
+            }
+
             this.minigunSpinning = true;
             this.minigunHeat = 0;
             
@@ -370,7 +387,12 @@
                 const now = Date.now();
                 if (now - this.lastMinigunShot < this.currentWeapon.fireRate) return;
                 const currentMinigunAmmo = window.gameState?.ammoCount?.minigun ?? 0;
-                if (currentMinigunAmmo <= 0) return;
+                if (currentMinigunAmmo <= 0) {
+                    // SONIDO: Arma vacía
+                    if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('empty_click', 0.5, 1.0);
+                    this.stopMinigun();
+                    return;
+                }
                 this.lastMinigunShot = now;
                 const spread = this.minigunHeat / this.MINIGUN.maxHeat;
                 const currentSpread = this.MINIGUN.baseSpreadAngle + spread * (this.MINIGUN.maxSpreadAngle - this.MINIGUN.baseSpreadAngle);
@@ -395,6 +417,8 @@
             if (ammoWeapons.includes(weapon.type)) {
                 const currentAmmo = window.gameState?.ammoCount?.[weapon.type] ?? 0;
                 if (currentAmmo <= 0) {
+                    // SONIDO: Arma vacía
+                    if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('empty_click', 0.5, 1.0);
                     return [];
                 }
             }

@@ -101,6 +101,20 @@ function updateHealthBar() {
     const healthPercent = (gameState.playerLives / MAX_LIVES) * 100;
     healthBar.style.width = `${healthPercent}%`;
     healthBar.style.transform = 'scale(1.05)';
+    
+    // SONIDO: Vida baja
+    if (healthPercent < 25 && gameState.playerLives > 0) {
+        if (!gameState.lowHealthSoundActive) {
+            gameState.lowHealthSoundActive = true;
+            if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('low_health_warn', 0.4, 1.0, true, false); // Loop=true
+        }
+    } else {
+        if (gameState.lowHealthSoundActive) {
+            if (window.SOUND_SYSTEM) SOUND_SYSTEM.stop('low_health_warn');
+            gameState.lowHealthSoundActive = false;
+        }
+    }
+    
     setTimeout(() => {
         if (healthBar) healthBar.style.transform = 'scale(1)';
     }, 200);
@@ -398,6 +412,11 @@ function cleanupExcessStains() {
 }
 
 function createOrganicOrangeExplosion(x, y, radius = 10) {
+    // SONIDO: Explosión orgánica al morir bestia naranja
+    if (window.SOUND_SYSTEM) {
+        SOUND_SYSTEM.play('organic_explosion', 0.7, 0.9 + Math.random() * 0.2);
+    }
+
     const shockwave = document.createElement('div');
     shockwave.className = 'organic-shockwave';
     shockwave.style.cssText = `left:${x}px;top:${y}px;width:${radius * 4}px;height:${radius * 4}px`;
@@ -1645,6 +1664,13 @@ function detectAndApplyRubbleEffect() {
     }
     
     if (isOnRubble) {
+        // SONIDO: Pasos sobre escombros
+        if ((gameState.keys['w'] || gameState.keys['s'] || gameState.keys['a'] || gameState.keys['d']) && 
+            window.SOUND_SYSTEM && Date.now() - gameState.lastDebrisSound > 400) {
+            SOUND_SYSTEM.play('debris_step', 0.3, 0.8 + Math.random() * 0.4);
+            gameState.lastDebrisSound = Date.now();
+        }
+
         const deviation = RUBBLE_SYSTEM.applyUnstableEffect(gameState.playerX, gameState.playerY, gameState.playerSpeed);
         gameState.rubbleDeviationX = deviation.x;
         gameState.rubbleDeviationY = deviation.y;
@@ -1938,6 +1964,11 @@ function updatePlayerPosition() {
         const dx = gameState.playerX - pickup.x;
         const dy = gameState.playerY - pickup.y;
         if (Math.hypot(dx, dy) < 24) {
+            // SONIDO: Recoger munición
+            if (window.SOUND_SYSTEM) {
+                SOUND_SYSTEM.play('ammo_pickup', 0.6, 1.0);
+            }
+            
             for (const [weaponType, amount] of Object.entries(pickup.ammo || {})) {
                 if (window.WEAPON_SYSTEM && window.WEAPON_SYSTEM.addAmmo) {
                     window.WEAPON_SYSTEM.addAmmo(weaponType, amount);
@@ -2057,6 +2088,11 @@ function spawnAmmoPickup(x, y, ammo, color) {
 }
 
 function handleEnemyHit(enemy, amount, impactAngle) {
+    // SONIDO: Rugido de dolor al recibir impacto
+    if (window.SOUND_SYSTEM) {
+        SOUND_SYSTEM.play('beast_pain', 0.4, 0.9 + Math.random() * 0.3);
+    }
+
     if (enemy.type === 'orange') {
         enemy.hitsTaken += amount;
         gameState.hits++;
@@ -2480,6 +2516,13 @@ function endGame() {
     }
     
     gameState.gameActive = false;
+    
+    // SONIDO: Detener sonido de vida baja si estaba activo
+    if (gameState.lowHealthSoundActive) {
+        if (window.SOUND_SYSTEM) SOUND_SYSTEM.stop('low_health_warn');
+        gameState.lowHealthSoundActive = false;
+    }
+    
     if (finalScoreElement) finalScoreElement.textContent = `Puntuación: ${formatScore(gameState.score)}`;
     if (document.getElementById('hits-final')) document.getElementById('hits-final').textContent = `Impactos: ${gameState.hits}`;
     if (document.getElementById('walls-destroyed')) document.getElementById('walls-destroyed').textContent = `Ladrillos destruidos: ${gameState.wallsDestroyed}`;
@@ -2516,6 +2559,9 @@ function toggleMinimap() {
     gameState.minimapVisible = !gameState.minimapVisible;
     if (minimap) minimap.style.display = gameState.minimapVisible ? 'block' : 'none';
     if (gameState.minimapVisible) {
+        // SONIDO: Abrir minimapa
+        if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('click_menu', 0.5, 1.0);
+        
         // Forzar reconstrucción al volver a mostrarlo (por si cambió de región mientras estaba oculto)
         minimapRegionCache = null;
         updateMinimapCached();
@@ -2538,6 +2584,9 @@ function updateWorldColorBasedOnLevel() {
         COLOR_SYSTEM.updateVisualProgress(newLevel);
         
         if (newLevel > gameState.previousLevel) {
+            // SONIDO: Nivel de exploración alcanzado
+            if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('level_up', 0.6, 1.0);
+            
             const targetColor = COLOR_SYSTEM.getColorForLevel(newLevel);
             COLOR_SYSTEM.applyColorTransition(targetColor);
             updateGameContainerColor(targetColor);

@@ -141,6 +141,8 @@
             lastRubbleCheck: 0,
             isInCorpse: false,
             lastCorpseDamage: 0,
+            lastDebrisSound: 0,
+            lowHealthSoundActive: false,
             cooldownWeaponType: null,
             ammoCount: {
                 rifle: 0,
@@ -472,14 +474,24 @@
                 'shot_sniper': 'sounds/sniper.mp3',
                 'shot_bazooka': 'sounds/bazooka.mp3',
                 'shot_minigun': 'sounds/minigun.mp3',
-                'shot_contact': 'sounds/bolt.mp3', // Usamos 'bolt.mp3' en lugar de 'contact.mp3'
+                'shot_contact': 'sounds/bolt.mp3',
                 'brick_hit': 'sounds/brick_hit.mp3',
                 'brick_destroy': 'sounds/brick_destroy.mp3',
                 'tentacle_hit': 'sounds/tentacle_hit.mp3',
                 'tentacle_explosion': 'sounds/tentacle_explosion.mp3',
                 'player_damage': 'sounds/player_damage.mp3',
                 'turbo_on': 'sounds/turbo.mp3',
-                'game_over': 'sounds/game_over.mp3'
+                'game_over': 'sounds/game_over.mp3',
+                'ammo_pickup': 'sounds/AMMO PICKUP.mp3',
+                'click_menu': 'sounds/clickMenu.mp3',
+                'cooldown': 'sounds/cooldown.mp3',
+                'empty_click': 'sounds/empty.mp3',
+                'organic_explosion': 'sounds/explosionOrganica.mp3',
+                'level_up': 'sounds/levelUp.mp3',
+                'debris_step': 'sounds/lightmetalcrash.mp3',
+                'beast_pain': 'sounds/rugidoDolor.mp3',
+                'spawn_start': 'sounds/spawn.mp3',
+                'low_health_warn': 'sounds/vidaBaja.mp3'
             };
             
             Object.entries(soundsToLoad).forEach(([name, url]) => {
@@ -490,7 +502,13 @@
                 startScreen.style.display = 'none';
                 gameWrapper.style.display = 'flex';
                 gameState.gameStarted = true;
-                gameState.lastTurboUpdate = Date.now();
+                gameState.lastTime = performance.now();
+                
+                // SONIDO: Spawn/Inicio de partida
+                if (window.SOUND_SYSTEM) {
+                    SOUND_SYSTEM.play('spawn_start', 0.6, 1.0);
+                }
+                
                 initGame();
             }, 800);
         };

@@ -33,6 +33,9 @@ const COOLDOWN_SYSTEM = {
         gameState.isCooldownActive = true;
         gameState.cooldownWeaponType = weaponType;
         
+        // SONIDO: Enfriamiento
+        if (window.SOUND_SYSTEM) SOUND_SYSTEM.play('cooldown', 0.5, 1.0);
+        
         if (cooldownIndicator) {
             cooldownIndicator.style.display = 'block';
             cooldownBar.style.transform = 'scaleX(0)';
