@@ -424,6 +424,11 @@ const DIRECTED_CORPSE_SYSTEM = {
         gameState.pestilenceDamageReceived = (gameState.pestilenceDamageReceived || 0) + damage;
         this.splashDamageTotal += damage;
         
+        // SONIDO: Daño por partículas de cadáver
+        if (window.SOUND_SYSTEM) {
+            SOUND_SYSTEM.play('player_damage', 0.5, 0.9 + Math.random() * 0.2);
+        }
+        
         updateHealthBar();
         this.createDirectedKnockback(playerX, playerY, corpse, isGreen);
         

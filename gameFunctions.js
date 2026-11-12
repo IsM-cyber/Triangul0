@@ -909,6 +909,7 @@ function createGreenEnemy() {
         
         const distanceToPlayer = Math.sqrt((posX - gameState.playerX)**2 + (posY - gameState.playerY)**2);
         if (distanceToPlayer < 200) {
+            console.log(`Spawn intento ${attempts}: Posición demasiado cerca (${posX.toFixed(0)}, ${posY.toFixed(0)}), jugador en (${gameState.playerX.toFixed(0)}, ${gameState.playerY.toFixed(0)})`);
             attempts++;
             continue;
         }
